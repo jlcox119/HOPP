@@ -4,6 +4,7 @@ from collections import OrderedDict, namedtuple
 from hybrid.sites import make_circular_site, make_irregular_site, SiteInfo, locations
 from hybrid.hybrid_simulation import HybridSimulation
 from tools.optimization.optimization_problem_new import OptimizationProblem
+import numpy as np
 
 
 site = 'irregular'
@@ -29,10 +30,10 @@ interconnection_size_mw = 150
 technologies = technologies = {'pv': {
                     'system_capacity_kw': solar_size_mw * 1000,
                 },
-                'wind': {
-                    'num_turbines': 25,
-                    'turbine_rating_kw': 2000
-                },
+                # 'wind': {
+                #     'num_turbines': 25,
+                #     'turbine_rating_kw': 2000
+                # },
                 'battery': battery_capacity_mwh * 1000,
                 'grid': interconnection_size_mw}
 
@@ -61,7 +62,7 @@ fixed_dispatch.extend([0.0] * 6)
 hybrid_plant.battery.dispatch.set_fixed_dispatch(fixed_dispatch)
 
 
-class HybridSizingProblem(OptimizationProblem):
+class HybridSizingProblem(): #OptimizationProblem
     """
     Optimize the hybrid system sizing design variables
     """
@@ -69,28 +70,97 @@ class HybridSizingProblem(OptimizationProblem):
                  simulation: HybridSimulation,
                  design_variables: OrderedDict) -> None:
         """
-        design_variables: nametuple of hybrid technologies each with a namedtuple of design variables
+        design_variables: dict of hybrid technologies each with a dict of design variable attributes
         """
-        super().__init__(simulation)
-        self.design_variables = design_variables
+        # super().__init__(simulation)
+        self.simulation = simulation
+        self._check_design_variables(design_variables)
 
-    def _set_design_variables_values(self,
-                                     design_variables: namedtuple) -> None:
-        for tech_key in design_variables._fields:
+    def _check_design_variables(self, design_variables: OrderedDict) -> None:
+        """
+        validate design_variables, bounds, prior
+        """
+        try:
+            bounds = []
+
+            for key, val in design_variables.items():
+                for subkey, subval in val.items():
+                    bounds.append(subval['bounds'])
+
+                    assert len(bounds[-1]) == 2, \
+                        f"{key}:{subkey} 'bounds' of length {len(bounds[-1])} not understood"
+
+                    assert bounds[-1][0] <= bounds[-1][1], \
+                        f"{key}:{subkey} invalid 'bounds': {bounds[-1][0]}(lower) > {bounds[-1][1]}(upper)"
+
+            self.lower_bounds = np.array([bnd[0] for bnd in bounds])
+            self.upper_bounds = np.array([bnd[1] for bnd in bounds])
+            self.ndim = len(bounds)
+
+        except KeyError as error:
+            raise KeyError(f"{key}:{subkey} needs simple bounds defined as 'bounds':(lower,upper)") from error
+
+        # create candidate factory functions
+        self.tech_variables = [namedtuple(key, val.keys()) for key,val in design_variables.items()]
+        self.all_variables = namedtuple('DesignCandidate', design_variables.keys())
+
+        num_vars = [len(x._fields) for x in self.tech_variables]
+        self.candidate_idx = np.concatenate(([0], np.cumsum(num_vars)))
+
+        priors = (0.5 * np.ones(self.candidate_idx[-1])) * (self.upper_bounds - self.lower_bounds) + self.lower_bounds
+        i = 0
+
+        for key, val in design_variables.items():
+            for subkey, subval in val.items():
+                try:
+                    priors[i] = subval['prior']
+
+                except KeyError:
+                    # no prior given, assume midpoint
+                    # print(f"{key}:{subkey} no 'prior' given")
+                    pass
+
+                assert (priors[i] >= self.lower_bounds[i]) and (priors[i] <= self.upper_bounds[i]), \
+                    f"{key}:{subkey} invalid 'prior':{priors[i]}, outside 'bounds':({self.lower_bounds[i]},{self.upper_bounds[i]})"
+                i += 1
+
+        tech_candidates = [self.tech_variables[i](*priors[idx[0]:idx[1]]) for i, idx in
+                            enumerate(zip(self.candidate_idx[:-1], self.candidate_idx[1:]))]
+        candidate = self.all_variables(*tech_candidates)
+
+        for tech_key in candidate._fields:
             tech_model = getattr(self.simulation, tech_key)
-            tech_variables = getattr(design_variables, tech_key)
+            tech_variables = getattr(candidate, tech_key)
             for key in tech_variables._fields:
                 if hasattr(tech_model, key):
                     setattr(tech_model, key, getattr(tech_variables, key))
                 else:
                     tech_model.value(key, getattr(tech_variables, key))
 
-    def _set_simulation_to_candidate(self, candidate):
-        pass
+    def _set_simulation_to_candidate(self,
+                                     candidate: namedtuple) -> None:
+        for tech_key in candidate._fields:
+            tech_model = getattr(self.simulation, tech_key)
+            tech_variables = getattr(candidate, tech_key)
+            for key in tech_variables._fields:
+                if hasattr(tech_model, key):
+                    setattr(tech_model, key, getattr(tech_variables, key))
+                else:
+                    tech_model.value(key, getattr(tech_variables, key))
+
+    def _check_candidate(self, candidate: namedtuple):
+        assert isinstance(candidate, self.all_variables)
+
+    def candidate_from_array(self, values: np.array):
+        tech_candidates = [self.tech_variables[i](*values[idx[0]:idx[1]]) for i, idx in
+                           enumerate(zip(self.candidate_idx[:-1], self.candidate_idx[1:]))]
+        return self.all_variables(*tech_candidates)
 
     def evaluate_objective(self, candidate: namedtuple):
-        self._set_design_variables_values(candidate)
-        self.simulation.simulate(1)
+        self._check_candidate(candidate)
+
+        self._set_simulation_to_candidate(candidate)
+        self.simulation.simulate(1, is_test=True)
         evaluation = self.simulation.net_present_values.hybrid
         return evaluation
 
@@ -105,6 +175,15 @@ design_variables = OrderedDict(
 
 problem = HybridSizingProblem(hybrid_plant, design_variables)
 
+# from humpday import OPTIMIZERS
+#
+# optimizer = cmaes(**config).run
+#
+#
+# driver = OptimizationDriver(problem, optimizer, **kwargs)
+#
+# driver.run()
+
 # pv = namedtuple('pv', ['system_capacity_kw', 'tilt'])
 # pv_vars = pv(50*1e3, 45)
 #
@@ -115,13 +194,17 @@ problem = HybridSizingProblem(hybrid_plant, design_variables)
 #
 # V = Variables(pv_vars, battery_vars)
 
+# driver = OptimizationDriver(problem, optimizer, scaled=True)
+
 
 """
 Occurs when creating the driver by passing in the problem
 """
 import numpy as np
+# move to problem init
 tech_vars = [namedtuple(key, val.keys()) for key,val in design_variables.items()]
 all_vars = namedtuple('Variables', design_variables.keys())
+
 
 num_vars = [len(x._fields) for x in tech_vars]
 num_vars_sum = np.concatenate(([0], np.cumsum(num_vars)))
@@ -137,15 +220,11 @@ upper_bounds = np.array([item[1] for sublist in nested_bounds for item in sublis
 Occurs when the optimizer needs to evaluate the objective
  driver wraps the problem objective function, as the optimizer provides vals, but the objective needs candidate
 """
-vals = 0.5 * np.ones(5)
+
+vals = 0.25 * np.arange(5)
 scaled_vals = vals * (upper_bounds - lower_bounds) + lower_bounds
+candidate = problem.candidate_from_array(scaled_vals)
+print(candidate)
 
-nest_vals = [tech_vars[i](*scaled_vals[idx[0]:idx[1]]) for i,idx in enumerate(zip(num_vars_sum[:-1], num_vars_sum[1:]))]
-candidate = all_vars(*nest_vals)
-
-
-# site_info.n_timesteps = 48
 problem.evaluate_objective(candidate)
-
-
 
