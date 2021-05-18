@@ -55,12 +55,13 @@ class HybridSizingProblem(OptimizationProblem):
     Optimize the hybrid system sizing design variables
     """
     def __init__(self,
-                 simulation: HybridSimulation) -> None:
+                 simulation: HybridSimulation,
+                 design_variables: OrderedDict) -> None:
         """
         design_variables: nametuple of hybrid technologies each with a namedtuple of design variables
         """
         super().__init__(simulation)
-        self.candidate_dict = OrderedDict()
+        self.design_variables = design_variables
 
     def _set_design_variables_values(self,
                                      design_variables: namedtuple) -> None:
@@ -76,28 +77,64 @@ class HybridSizingProblem(OptimizationProblem):
     def _set_simulation_to_candidate(self, candidate):
         pass
 
-    def evaluate_objective(self, design_variables: namedtuple):
-        self._set_design_variables_values(design_variables)
+    def evaluate_objective(self, candidate: namedtuple):
+        self._set_design_variables_values(candidate)
         self.simulation.simulate(1)
         evaluation = self.simulation.net_present_values.hybrid
         return evaluation
 
 
-problem = HybridSizingProblem(hybrid_plant)
+design_variables = OrderedDict(
+    pv=      {'system_capacity_kw':  {'bounds':(25*1e3,  75*1e3)},
+              'tilt':                {'bounds':(30,      60)}},
+    battery= {'system_capacity_kwh': {'bounds':(150*1e3, 250*1e3)},
+              'system_capacity_kw':  {'bounds':(25*1e3,  75*1e3)},
+              'system_voltage_volts':{'bounds':(400,     600)}}
+)
 
-pv = namedtuple('pv', ['system_capacity_kw', 'tilt'])
-pv_vars = pv(50*1e3, 45)
+problem = HybridSizingProblem(hybrid_plant, design_variables)
 
-battery = namedtuple('battery', ['system_capacity_kwh', 'system_capacity_kw', 'system_voltage_volts'])
-battery_vars = battery(200*1e3, 50*1e3, 500.0)
+# pv = namedtuple('pv', ['system_capacity_kw', 'tilt'])
+# pv_vars = pv(50*1e3, 45)
+#
+# battery = namedtuple('battery', ['system_capacity_kwh', 'system_capacity_kw', 'system_voltage_volts'])
+# battery_vars = battery(200*1e3, 50*1e3, 500.0)
+#
+# Variables = namedtuple('Variables', ['pv', 'battery'])
+#
+# V = Variables(pv_vars, battery_vars)
 
-Variables = namedtuple('Variables', ['pv', 'battery'])
 
-V = Variables(pv_vars, battery_vars)
+"""
+Occurs when creating the driver by passing in the problem
+"""
+import numpy as np
+tech_vars = [namedtuple(key, val.keys()) for key,val in design_variables.items()]
+all_vars = namedtuple('Variables', design_variables.keys())
+
+num_vars = [len(x._fields) for x in tech_vars]
+num_vars_sum = np.concatenate(([0], np.cumsum(num_vars)))
+
+nested_bounds = [[subval['bounds'] for subkey,subval in val.items()]
+                     for key,val in design_variables.items()]
+
+lower_bounds = np.array([item[0] for sublist in nested_bounds for item in sublist])
+upper_bounds = np.array([item[1] for sublist in nested_bounds for item in sublist])
+
+
+"""
+Occurs when the optimizer needs to evaluate the objective
+ driver wraps the problem objective function, as the optimizer provides vals, but the objective needs candidate
+"""
+vals = 0.5 * np.ones(5)
+scaled_vals = vals * (upper_bounds - lower_bounds) + lower_bounds
+
+nest_vals = [tech_vars[i](*scaled_vals[idx[0]:idx[1]]) for i,idx in enumerate(zip(num_vars_sum[:-1], num_vars_sum[1:]))]
+candidate = all_vars(*nest_vals)
 
 
 # site_info.n_timesteps = 48
-problem.evaluate_objective(V)
+problem.evaluate_objective(candidate)
 
 
 
