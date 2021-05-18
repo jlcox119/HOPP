@@ -51,7 +51,7 @@ class HybridDispatchBuilderSolver:
         #################################
         module = getattr(__import__("hybrid"), "dispatch")
         for source, tech in self.power_sources.items():
-            if source is 'battery':
+            if source == 'battery':
                 tech._dispatch = self.options.battery_dispatch_class(
                     model,
                     model.forecast_horizon,

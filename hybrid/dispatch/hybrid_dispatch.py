@@ -202,17 +202,17 @@ class HybridDispatch(Dispatch):
         def gross_profit_objective_rule(m):
             objective = 0.0
             for tech in self.power_sources.keys():
-                if tech is 'grid':
+                if tech == 'grid':
                     objective += sum(self.blocks[t].time_weighting_factor * self.blocks[t].electricity_sales
                                      - (1/self.blocks[t].time_weighting_factor) * self.blocks[t].electricity_purchases
                                      for t in self.blocks.index_set())
-                elif tech is 'pv':
+                elif tech == 'pv':
                     objective += sum(- (1/self.blocks[t].time_weighting_factor) * self.blocks[t].pv_generation_cost
                                      for t in self.blocks.index_set())
-                elif tech is 'wind':
+                elif tech == 'wind':
                     objective += sum(- (1/self.blocks[t].time_weighting_factor) * self.blocks[t].wind_generation_cost
                                      for t in self.blocks.index_set())
-                elif tech is 'battery':
+                elif tech == 'battery':
                     objective += sum(- (1/self.blocks[t].time_weighting_factor) * self.blocks[t].battery_charge_cost
                                      - (1/self.blocks[t].time_weighting_factor) * self.blocks[t].battery_discharge_cost
                                      for t in self.blocks.index_set())

@@ -72,7 +72,8 @@ class HybridSimulation:
         self.dispatch_builder: Union[HybridDispatchBuilderSolver, None] = None
         self.grid: Union[Grid, None] = None
 
-        for k in power_sources.keys():
+        temp = list(power_sources.keys())
+        for k in temp:
             power_sources[k.lower()] = power_sources.pop(k)
 
         if 'pv' in power_sources.keys():
@@ -265,7 +266,7 @@ class HybridSimulation:
         self.calculate_financials()
 
         hybrid_size_kw = 0
-        total_gen = np.zeros(self.site.n_timesteps * project_life)
+        total_gen = np.zeros(int(self.site.n_timesteps * project_life))
         if self.pv:
             hybrid_size_kw += self.pv.system_capacity_kw
             self.pv.simulate(project_life)

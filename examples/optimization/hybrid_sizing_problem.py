@@ -95,6 +95,8 @@ Variables = namedtuple('Variables', ['pv', 'battery'])
 
 V = Variables(pv_vars, battery_vars)
 
+
+# site_info.n_timesteps = 48
 problem.evaluate_objective(V)
 
 
