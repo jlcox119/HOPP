@@ -52,11 +52,12 @@ class HybridDispatch(Dispatch):
 
     @staticmethod
     def _create_parameters(hybrid):
-        hybrid.time_weighting_factor = pyomo.Param(doc="Exponential time weighting factor [-]",
-                                                   initialize=1.0,
-                                                   within=pyomo.PercentFraction,
-                                                   mutable=True,
-                                                   units=u.dimensionless)
+        hybrid.time_weighting_factor = pyomo.Param(
+            doc="Exponential time weighting factor [-]",
+            initialize=1.0,
+            within=pyomo.PercentFraction,
+            mutable=True,
+            units=u.dimensionless)
 
     def _create_pv_variables(self, hybrid, t):
         hybrid.pv_generation_cost = pyomo.Var(
@@ -73,7 +74,7 @@ class HybridDispatch(Dispatch):
 
     def _create_pv_port(self, hybrid, t):
         hybrid.pv_port = Port(initialize={'generation_cost': hybrid.pv_generation_cost,
-                                             'generation': hybrid.pv_generation})
+                                          'generation': hybrid.pv_generation})
         self.ports[t].append(hybrid.pv_port)
 
     def _create_wind_variables(self, hybrid, t):
