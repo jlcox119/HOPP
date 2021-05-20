@@ -19,7 +19,13 @@ class AskTellOptimizer:
     Example usage:
     while not opt.stop():
         x = opt.ask()
+
+
+
         y = f(x)
+
+
+
         opt.tell(x, y)
     return opt.best()
     """

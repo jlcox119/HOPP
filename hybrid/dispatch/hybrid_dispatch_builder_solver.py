@@ -179,7 +179,7 @@ class HybridDispatchBuilderSolver:
         # Solving the year in series
         ti = list(range(0, self.site.n_timesteps, self.options.n_roll_periods))
         for i, t in enumerate(ti):
-            print('Evaluating day ', i, ' out of ', len(ti))
+            # print('Evaluating day ', i, ' out of ', len(ti))
             self.simulate_with_dispatch(t)
             if self.options.is_test and i > 10:
                 break

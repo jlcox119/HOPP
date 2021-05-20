@@ -4,8 +4,15 @@ from collections import OrderedDict, namedtuple
 from hybrid.sites import make_circular_site, make_irregular_site, SiteInfo, locations
 from hybrid.hybrid_simulation import HybridSimulation
 from tools.optimization.optimization_problem_new import OptimizationProblem
-import numpy as np
 
+import numpy as np
+import warnings
+warnings.simplefilter("ignore")
+import humpday
+warnings.simplefilter("default")
+from functools import wraps
+from time import time
+import operator
 
 site = 'irregular'
 location = locations[1]
@@ -95,7 +102,7 @@ class HybridSizingProblem(): #OptimizationProblem
 
             self.lower_bounds = np.array([bnd[0] for bnd in bounds])
             self.upper_bounds = np.array([bnd[1] for bnd in bounds])
-            self.ndim = len(bounds)
+            self.n_dim = len(bounds)
 
         except KeyError as error:
             raise KeyError(f"{key}:{subkey} needs simple bounds defined as 'bounds':(lower,upper)") from error
@@ -149,10 +156,25 @@ class HybridSizingProblem(): #OptimizationProblem
                     tech_model.value(key, getattr(tech_variables, key))
 
     def _check_candidate(self, candidate: namedtuple):
-        assert isinstance(candidate, self.all_variables)
+        assert isinstance(candidate, self.all_variables), \
+            f"Design candidate must be a NamedTuple created with {self.__name__}.candidate...() methods"
+
+        i = 0
+        for field in candidate._fields:
+            tech_vars = getattr(candidate, field)
+            for subfield, value in zip(tech_vars._fields, tech_vars):
+                assert (value >= self.lower_bounds[i]) and (value <= self.upper_bounds[i]), \
+                    f"{field}:{subfield} invalid value ({value}), outside 'bounds':({self.lower_bounds[i]},{self.upper_bounds[i]})"
+                i += 1
 
     def candidate_from_array(self, values: np.array):
         tech_candidates = [self.tech_variables[i](*values[idx[0]:idx[1]]) for i, idx in
+                           enumerate(zip(self.candidate_idx[:-1], self.candidate_idx[1:]))]
+        return self.all_variables(*tech_candidates)
+
+    def candidate_from_unit_array(self, values: np.array):
+        scaled_values = values * (self.upper_bounds - self.lower_bounds) + self.lower_bounds
+        tech_candidates = [self.tech_variables[i](*scaled_values[idx[0]:idx[1]]) for i, idx in
                            enumerate(zip(self.candidate_idx[:-1], self.candidate_idx[1:]))]
         return self.all_variables(*tech_candidates)
 
@@ -160,10 +182,96 @@ class HybridSizingProblem(): #OptimizationProblem
         self._check_candidate(candidate)
 
         self._set_simulation_to_candidate(candidate)
-        self.simulation.simulate(1, is_test=True)
+        self.simulation.simulate(1)
         evaluation = self.simulation.net_present_values.hybrid
         return evaluation
 
+from collections.abc import Callable
+
+class OptimizationDriver():
+
+    def __init__(self,
+                 problem, #: OptimizationProblem,
+                 optimizer, #: Callable[[np.array], float],
+                 driver_kwargs=None,
+                 optimizer_kwargs=None
+                 ):
+
+        self.problem = problem
+        self.optimizer = optimizer
+        self.driver_kwargs = driver_kwargs
+        self.optimizer_kwargs = optimizer_kwargs
+        self.objective = self.wrap_objective()
+        self.cache = dict()
+        self.start_time = None
+        self.cache_info = {'hits': 0,
+                           'misses': 0,
+                           'size': 0,
+                           'total_evals': 0}
+
+        self.log_headers = ['Obj_Evals', 'Best_Objective', 'Eval_Time', 'Total_Time']
+        self.log_widths = [len(header)+5 for header in self.log_headers]
+        self.best_obj = None
+
+    def wrap_objective(self):
+        obj = self.problem.evaluate_objective
+
+        if True: #scaling required?
+            @wraps(obj)
+            def wrapper(*args, **kwargs):
+                candidate = self.problem.candidate_from_unit_array(*args)
+                if self.start_time is None:
+                    self.start_time = iter_start = time()
+                    print("  ".join((val.rjust(width) for val, width in zip(self.log_headers, self.log_widths))))
+
+                else:
+                    iter_start = time()
+
+                try:
+                    self.cache_info['total_evals'] += 1
+                    value = self.cache[candidate]
+                    if value < self.best_obj:
+                        self.best_obj = value
+                    self.cache_info['hits'] += 1
+                    log_values = [str(self.cache_info['total_evals']),
+                                  f'{self.best_obj:8g}',
+                                  f'*{time()-iter_start:.2f} sec',
+                                  f'{time()-self.start_time:.2f} sec']
+                    print("  ".join((val.rjust(width) for val, width in zip(log_values, self.log_widths))))
+                    return value
+
+                except:
+                    self.cache_info['misses'] += 1
+
+                elapsed = time() - self.start_time
+                if elapsed > self.driver_kwargs['time_limit']:
+                    print(f"Driver exiting, time limit: {self.driver_kwargs['time_limit']} secs exceeded")
+                    raise Exception
+
+                value = obj(candidate, **kwargs)
+                if self.best_obj is None or value < self.best_obj:
+                    self.best_obj = value
+                self.cache[candidate] = value
+                self.cache_info['size'] += 1
+                log_values = [str(self.cache_info['total_evals']),
+                              f'{self.best_obj:8g}',
+                              f'{time() - iter_start:.2f} sec',
+                              f'{time() - self.start_time:.2f} sec']
+                print("  ".join((val.rjust(width) for val, width in zip(log_values, self.log_widths))))
+                return value
+
+            return wrapper
+
+    def run(self):
+        self.start_time = None
+        try:
+            u, v = self.optimizer(self.objective,  **self.optimizer_kwargs)
+
+        except Exception:
+            pass
+
+        best_candidate, best_objective = min(self.cache.items(), key=operator.itemgetter(1))
+        return best_candidate, best_objective
 
 design_variables = OrderedDict(
     pv=      {'system_capacity_kw':  {'bounds':(25*1e3,  75*1e3)},
@@ -175,56 +283,15 @@ design_variables = OrderedDict(
 
 problem = HybridSizingProblem(hybrid_plant, design_variables)
 
-# from humpday import OPTIMIZERS
-#
-# optimizer = cmaes(**config).run
-#
-#
-# driver = OptimizationDriver(problem, optimizer, **kwargs)
-#
-# driver.run()
+optimizer = humpday.OPTIMIZERS[1]
 
-# pv = namedtuple('pv', ['system_capacity_kw', 'tilt'])
-# pv_vars = pv(50*1e3, 45)
-#
-# battery = namedtuple('battery', ['system_capacity_kwh', 'system_capacity_kw', 'system_voltage_volts'])
-# battery_vars = battery(200*1e3, 50*1e3, 500.0)
-#
-# Variables = namedtuple('Variables', ['pv', 'battery'])
-#
-# V = Variables(pv_vars, battery_vars)
+opt_config = dict(n_dim=problem.n_dim, n_trials=200, with_count=True)
+driver_config = dict(time_limit=90)
 
-# driver = OptimizationDriver(problem, optimizer, scaled=True)
+driver = OptimizationDriver(problem, optimizer, optimizer_kwargs=opt_config, driver_kwargs=driver_config)
+best_candidate, best_objective = driver.run()
 
+print(best_objective)
+print(best_candidate)
 
-"""
-Occurs when creating the driver by passing in the problem
-"""
-import numpy as np
-# move to problem init
-tech_vars = [namedtuple(key, val.keys()) for key,val in design_variables.items()]
-all_vars = namedtuple('Variables', design_variables.keys())
-
-
-num_vars = [len(x._fields) for x in tech_vars]
-num_vars_sum = np.concatenate(([0], np.cumsum(num_vars)))
-
-nested_bounds = [[subval['bounds'] for subkey,subval in val.items()]
-                     for key,val in design_variables.items()]
-
-lower_bounds = np.array([item[0] for sublist in nested_bounds for item in sublist])
-upper_bounds = np.array([item[1] for sublist in nested_bounds for item in sublist])
-
-
-"""
-Occurs when the optimizer needs to evaluate the objective
- driver wraps the problem objective function, as the optimizer provides vals, but the objective needs candidate
-"""
-
-vals = 0.25 * np.arange(5)
-scaled_vals = vals * (upper_bounds - lower_bounds) + lower_bounds
-candidate = problem.candidate_from_array(scaled_vals)
-print(candidate)
-
-problem.evaluate_objective(candidate)
-
+# from examples.optimization.hybrid_sizing_problem import *
