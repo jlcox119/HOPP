@@ -12,7 +12,7 @@ warnings.simplefilter("default")
 
 from collections import OrderedDict
 
-
+import multiprocessing
 
 site = 'irregular'
 location = locations[1]
@@ -82,20 +82,25 @@ design_variables = OrderedDict(
 # Problem definition
 problem = HybridSizingProblem(hybrid_plant, design_variables)
 
+
+# call method to evaluate prior? (one objective call)
+
+
+
 # Optimizer callable init
-optimizer = humpday.OPTIMIZERS[1]
+optimizers = [humpday.OPTIMIZERS[1], humpday.OPTIMIZERS[-3]]
 
 # Optimizer and driver config
 opt_config = dict(n_dim=problem.n_dim, n_trials=200, with_count=True)
-driver_config = dict(time_limit=20)
+driver_config = dict(time_limit=20, eval_limit=5, obj_limit=-2e8)
 
 # Driver init
 driver = OptimizationDriver(problem,
-                            optimizer,
                             optimizer_kwargs=opt_config,
                             driver_kwargs=driver_config)
 
-best_candidate, best_objective = driver.run()
+best_candidate, best_objective = driver.run(optimizers[0])
+best_candidate, best_objective = driver.run(optimizers[1])
 
 
-# from examples.optimization.hybrid_sizing_problem import *
+# from alt_dev.run_alt import *

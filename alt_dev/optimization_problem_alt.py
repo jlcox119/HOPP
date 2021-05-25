@@ -111,4 +111,5 @@ class HybridSizingProblem(): #OptimizationProblem
         self._set_simulation_to_candidate(candidate)
         self.simulation.simulate(1)
         evaluation = self.simulation.net_present_values.hybrid
-        return evaluation
+
+        return -evaluation
