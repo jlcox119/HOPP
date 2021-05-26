@@ -1,6 +1,7 @@
+import concurrent.futures as cf
+import threading
 import multiprocessing
 import time
-import numpy as np
 
 
 class Worker(multiprocessing.Process):
@@ -25,6 +26,7 @@ class Worker(multiprocessing.Process):
             self.cache[candidate] = result
         return
 
+
 class Task(object):
     def __init__(self, a, b):
         self.a = a
@@ -36,6 +38,54 @@ class Task(object):
 
     def __str__(self):
         return '%s * %s' % (self.a, self.b)
+
+
+def func(x, tasks, cache, lock):
+    results = []
+
+    for val in range(x):
+        candidate = (val, val)
+
+        try:
+            lock.acquire()
+            result = cache[candidate]
+            lock.release()
+
+            if result is None:
+                while (result := cache[candidate]) is None:
+                    time.sleep(0.01)
+
+                with lock:
+                    print(f'{x} Cache wait:', candidate, result)
+                results.append((candidate, result))
+
+            else:
+
+                with lock:
+                    print(f'{x} Cache hit:', candidate, result)
+                results.append((candidate, result))
+
+        except KeyError:
+            cache[candidate] = None
+            print(f'{x} Candidate entering task queue:', candidate)
+            tasks.put(Task(*candidate))
+            lock.release()
+
+            while (result := cache[candidate]) is None:
+                time.sleep(0.01)
+
+            with lock:
+                print(f'{x} Task return:', candidate, result)
+
+            results.append((candidate, result))
+
+    return results
+
+
+def kill_workers(tasks, num_workers):
+    # Add a poison pill for each consumer
+    for i in range(num_workers):
+        tasks.put(None)
 
 if __name__ == '__main__':
     # Establish communication queues
@@ -51,27 +101,25 @@ if __name__ == '__main__':
     for w in workers:
         w.start()
 
-    # Enqueue jobs
-    num_jobs = 10
-    for i in range(num_jobs):
-        candidate = (1, 1)
-        if candidate in cache:
-            if cache[candidate] is None:
-                print('Candidate waiting in queue:', candidate)
+    # Starting threads that act like optimizers
+    start = time.perf_counter()
+    lock = threading.Lock()
 
-            while (result := cache[candidate]) is None:
-                time.sleep(0.01)
+    with cf.ThreadPoolExecutor(max_workers=10) as executor:
+        threads = {executor.submit(func, x, tasks, cache, lock): x for x in range(10, 0, -1)}
 
-            print('Cache hit:', candidate, result)
+        for future in cf.as_completed(threads):
+            wait = threads[future]
+            result = future.result()
 
-        else:
-            print('Candidate entering task queue:', candidate)
-            cache[candidate] = None
-            tasks.put(Task(*candidate))
+            with lock:
+                print(wait, 'thread finished', result)
 
-    # Add a poison pill for each consumer
-    for i in range(num_workers):
-        tasks.put(None)
+    end = time.perf_counter()
+    print(f'\n#### Elapsed time: {end - start:.2f} secs #### \n')
+
+    # End worker processes
+    kill_workers(tasks, num_workers)
 
     # Wait for all of the tasks to finish
     tasks.join()
@@ -79,5 +127,5 @@ if __name__ == '__main__':
         w.join()
 
     # Start printing results
-    for key,value in cache.items():
+    for key, value in cache.items():
         print('Result:', key, value)
