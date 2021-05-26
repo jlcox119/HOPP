@@ -2,6 +2,7 @@ import concurrent.futures as cf
 import threading
 import multiprocessing
 import time
+import numpy as np
 
 
 class Worker(multiprocessing.Process):
@@ -22,6 +23,7 @@ class Worker(multiprocessing.Process):
                 break
 
             candidate, result = task()
+
             self.task_queue.task_done()
             self.cache[candidate] = result
         return
@@ -33,8 +35,16 @@ class Task(object):
         self.b = b
 
     def __call__(self):
-        time.sleep(0.1) # pretend to take some time to do the work
-        return (self.a, self.b), '%s * %s = %s' % (self.a, self.b, self.a * self.b)
+        try:
+
+            time.sleep(0.1) # pretend to take some time to do the work
+            if (self.a == 9) and (self.b == 9):
+                raise Exception
+
+            return (self.a, self.b), '%s * %s = %s' % (self.a, self.b, self.a * self.b)
+
+        except:
+            return (self.a, self.b), np.nan
 
     def __str__(self):
         return '%s * %s' % (self.a, self.b)
@@ -105,7 +115,7 @@ if __name__ == '__main__':
     start = time.perf_counter()
     lock = threading.Lock()
 
-    with cf.ThreadPoolExecutor(max_workers=10) as executor:
+    with cf.ThreadPoolExecutor(max_workers=2) as executor:
         threads = {executor.submit(func, x, tasks, cache, lock): x for x in range(10, 0, -1)}
 
         for future in cf.as_completed(threads):
