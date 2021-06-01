@@ -2,7 +2,7 @@ from pathlib import Path
 from hybrid.sites import make_circular_site, make_irregular_site, SiteInfo, locations
 
 from hybrid.hybrid_simulation import HybridSimulation
-from alt_dev.optimization_problem_alt import HybridSizingProblem
+from alt_dev.optimization_problem_alt import OptimizationProblem
 from alt_dev.optimization_driver_alt import OptimizationDriver
 
 import warnings
@@ -79,28 +79,19 @@ design_variables = OrderedDict(
               'system_voltage_volts':{'bounds':(400,     600)}}
 )
 
-# Problem definition
-problem = HybridSizingProblem(hybrid_plant, design_variables)
 
+if __name__ == '__main__':
+    # Problem definition
+    problem = OptimizationProblem(hybrid_plant, design_variables)
 
-# call method to evaluate prior? (one objective call)
+    # Optimizer callable init
+    optimizers = [humpday.OPTIMIZERS[1]]#, humpday.OPTIMIZERS[-3]]
 
+    # Optimizer and driver config
+    opt_config = dict(n_dim=problem.n_dim, n_trials=200, with_count=True)
+    driver_config = dict(time_limit=60, eval_limit=100, obj_limit=-3e8)
 
+    # Driver init
+    driver = OptimizationDriver(problem, **driver_config)
 
-# Optimizer callable init
-optimizers = [humpday.OPTIMIZERS[1], humpday.OPTIMIZERS[-3]]
-
-# Optimizer and driver config
-opt_config = dict(n_dim=problem.n_dim, n_trials=200, with_count=True)
-driver_config = dict(time_limit=20, eval_limit=5, obj_limit=-2e8)
-
-# Driver init
-driver = OptimizationDriver(problem,
-                            optimizer_kwargs=opt_config,
-                            driver_kwargs=driver_config)
-
-best_candidate, best_objective = driver.run(optimizers[0])
-best_candidate, best_objective = driver.run(optimizers[1])
-
-
-# from alt_dev.run_alt import *
+    best_candidate, best_objective = driver.run(optimizers, opt_config)

@@ -1,8 +1,12 @@
 import numpy as np
 from hybrid.hybrid_simulation import HybridSimulation
 from collections import OrderedDict, namedtuple
+import traceback
 
-class HybridSizingProblem(): #OptimizationProblem
+class DesignCandidate(object):
+    pass
+
+class OptimizationProblem(): #HybridSizingProblem
     """
     Optimize the hybrid system sizing design variables
     """
@@ -16,6 +20,12 @@ class HybridSizingProblem(): #OptimizationProblem
         self.simulation = simulation
         self.design_variables = design_variables
         self._check_design_variables()
+
+        # works for DesignCandidate, but each of the tech candidates also need global (module) names
+        globals()[self.DesignCandidate.__name__] = self.DesignCandidate
+        for tech in self.tech_variables:
+            setattr(self, tech.__name__, tech)
+            globals()[tech.__name__] = getattr(self, tech.__name__)
 
     def _get_bounds(self) -> None:
         try:
@@ -37,7 +47,7 @@ class HybridSizingProblem(): #OptimizationProblem
         except KeyError as error:
             raise KeyError(f"{key}:{subkey} needs simple bounds defined as 'bounds':(lower,upper)") from error
 
-    def _validate_prior(self):
+    def _validate_prior(self) -> None:
         priors = (0.5 * np.ones(self.candidate_idx[-1])) * (self.upper_bounds - self.lower_bounds) + self.lower_bounds
         i = 0
 
@@ -65,7 +75,7 @@ class HybridSizingProblem(): #OptimizationProblem
 
         # create candidate factory functions
         self.tech_variables = [namedtuple(key, val.keys()) for key,val in self.design_variables.items()]
-        self.all_variables = namedtuple('DesignCandidate', self.design_variables.keys())
+        self.DesignCandidate = namedtuple('DesignCandidate', self.design_variables.keys())
 
         num_vars = [len(x._fields) for x in self.tech_variables]
         self.candidate_idx = np.concatenate(([0], np.cumsum(num_vars)))
@@ -82,8 +92,12 @@ class HybridSizingProblem(): #OptimizationProblem
                 else:
                     tech_model.value(key, getattr(tech_variables, key))
 
-    def _check_candidate(self, candidate: namedtuple):
-        assert isinstance(candidate, self.all_variables), \
+    def _check_candidate(self,
+                         candidate: namedtuple) -> None:
+        """
+
+        """
+        assert isinstance(candidate, self.DesignCandidate), \
             f"Design candidate must be a NamedTuple created with {self.__name__}.candidate...() methods"
 
         i = 0
@@ -94,22 +108,29 @@ class HybridSizingProblem(): #OptimizationProblem
                     f"{field}:{subfield} invalid value ({value}), outside 'bounds':({self.lower_bounds[i]},{self.upper_bounds[i]})"
                 i += 1
 
-    def candidate_from_array(self, values: np.array):
+    def candidate_from_array(self, values: np.array) -> namedtuple:
         tech_candidates = [self.tech_variables[i](*values[idx[0]:idx[1]]) for i, idx in
                            enumerate(zip(self.candidate_idx[:-1], self.candidate_idx[1:]))]
-        return self.all_variables(*tech_candidates)
+        return self.DesignCandidate(*tech_candidates)
 
-    def candidate_from_unit_array(self, values: np.array):
+    def candidate_from_unit_array(self, values: np.array) -> namedtuple:
         scaled_values = values * (self.upper_bounds - self.lower_bounds) + self.lower_bounds
         tech_candidates = [self.tech_variables[i](*scaled_values[idx[0]:idx[1]]) for i, idx in
                            enumerate(zip(self.candidate_idx[:-1], self.candidate_idx[1:]))]
-        return self.all_variables(*tech_candidates)
+        return self.DesignCandidate(*tech_candidates)
 
-    def evaluate_objective(self, candidate: namedtuple):
-        self._check_candidate(candidate)
+    def evaluate_objective(self, candidate: namedtuple) -> dict:
+        result = dict()
 
-        self._set_simulation_to_candidate(candidate)
-        self.simulation.simulate(1)
-        evaluation = self.simulation.net_present_values.hybrid
+        try:
+            self._check_candidate(candidate)
+            self._set_simulation_to_candidate(candidate)
+            self.simulation.simulate(1)
 
-        return -evaluation
+            result['objective'] = self.simulation.net_present_values.hybrid
+
+        except Exception:
+            result['exception'] = traceback.format_exc()
+            result['objective'] = np.nan
+
+        return result
