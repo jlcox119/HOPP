@@ -4,8 +4,8 @@ import numpy as np
 import concurrent.futures as cf
 import threading
 import multiprocessing
-from optimization_problem_alt import OptimizationProblem
-from collections import namedtuple
+from optimization_problem_alt import HybridSizingProblem
+# from collections import namedtuple
 
 class OptimizerInterrupt(Exception):
     pass
@@ -45,14 +45,11 @@ class Task(object):
     """
     Mock problem class to define the objective calculation
     """
-    def __init__(self, objective, candidate, args):
-        self.objective = objective
+    def __init__(self, candidate):
         self.candidate = candidate
-        self.args = args
 
     def __call__(self):
-        result = self.objective(*self.args)
-
+        result = objective(self.candidate)
         return self.candidate, result
 
 
@@ -69,7 +66,7 @@ class OptimizationDriver():
                           scaled=True)
 
     def __init__(self,
-                 problem: OptimizationProblem,
+                 problem: HybridSizingProblem,
                  **kwargs) -> None:
 
         self.problem = problem
@@ -77,8 +74,8 @@ class OptimizationDriver():
 
         self.objective = self.wrap_objective()
         self.init_cache()
-        self.get_candidate = self.problem.candidate_from_unit_array \
-            if self.options['scaled'] else self.problem.candidate_from_array
+        self.get_candidate = self.problem.candidate_from_unit_array if self.options['scaled'] \
+            else self.problem.candidate_from_array
         self.start_time = None
 
     def parse_kwargs(self, kwargs) -> None:
@@ -155,24 +152,24 @@ class OptimizationDriver():
         print(f'Best Objective: {best_objective:.2f}')
         print(f'Best Candidate:\n  {candidate_str}')
 
-    def get_from_cache(self, candidate):
-        try:
-            self.cache_info['total_evals'] += 1
-            value = self.cache[candidate]
-            self.cache_info['hits'] += 1
-            self.print_log_line('cache_hit')
-
-            print('Sending np.nan to the optimizer')
-            return np.nan # value
-
-        except KeyError:
-            self.eval_count += 1
-            self.cache_info['misses'] += 1
-            return None
-
-    def add_to_cache(self, candidate, value):
-        self.cache[candidate] = value
-        self.cache_info['size'] += 1
+    # def get_from_cache(self, candidate):
+    #     try:
+    #         self.cache_info['total_evals'] += 1
+    #         value = self.cache[candidate]
+    #         self.cache_info['hits'] += 1
+    #         self.print_log_line('cache_hit')
+    #
+    #         print('Sending np.nan to the optimizer')
+    #         return np.nan # value
+    #
+    #     except KeyError:
+    #         self.eval_count += 1
+    #         self.cache_info['misses'] += 1
+    #         return None
+    #
+    # def add_to_cache(self, candidate, value):
+    #     self.cache[candidate] = value
+    #     self.cache_info['size'] += 1
 
     def wrap_objective(self):
         obj = self.problem.evaluate_objective
@@ -210,7 +207,7 @@ class OptimizationDriver():
                 # Candidate not in cache
                 self.cache[candidate] = None  # indicates waiting in cache
                 print(f'{name} Candidate entering task queue:', candidate)
-                self.tasks.put(Task(obj, self.get_candidate, args))
+                self.tasks.put(Task(candidate))
                 self.lock.release()
 
                 # Poll cache for available result (should be threading.Condition)
@@ -238,7 +235,8 @@ class OptimizationDriver():
         n_opt = len(optimizers)
         num_workers = min(self.options['n_proc'], n_opt)
         print('Creating %d workers' % num_workers)
-        workers = [Worker(self.tasks, self.cache) for _ in range(num_workers)]
+        workers = [Worker(self.tasks, self.cache)
+                   for _ in range(num_workers)]
 
         for w in workers:
             w.start()

@@ -2,7 +2,7 @@ from pathlib import Path
 from hybrid.sites import make_circular_site, make_irregular_site, SiteInfo, locations
 
 from hybrid.hybrid_simulation import HybridSimulation
-from alt_dev.optimization_problem_alt import OptimizationProblem
+from alt_dev.optimization_problem_alt import HybridSizingProblem
 from alt_dev.optimization_driver_alt import OptimizationDriver
 
 import warnings
@@ -71,7 +71,7 @@ fixed_dispatch.extend([0.0] * 6)
 hybrid_plant.battery.dispatch.set_fixed_dispatch(fixed_dispatch)
 
 # Define Design Optimization Variables
-design_variables = OrderedDict(
+design_variables = dict(
     pv=      {'system_capacity_kw':  {'bounds':(25*1e3,  75*1e3)},
               'tilt':                {'bounds':(30,      60)}},
     battery= {'system_capacity_kwh': {'bounds':(150*1e3, 250*1e3)},
@@ -82,7 +82,7 @@ design_variables = OrderedDict(
 
 if __name__ == '__main__':
     # Problem definition
-    problem = OptimizationProblem(hybrid_plant, design_variables)
+    problem = HybridSizingProblem(hybrid_plant, design_variables)
 
     # Optimizer callable init
     optimizers = [humpday.OPTIMIZERS[1]]#, humpday.OPTIMIZERS[-3]]
@@ -93,5 +93,6 @@ if __name__ == '__main__':
 
     # Driver init
     driver = OptimizationDriver(problem, **driver_config)
+    objective = problem.evaluate_objective
 
     best_candidate, best_objective = driver.run(optimizers, opt_config)

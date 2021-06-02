@@ -1,33 +1,38 @@
 import numpy as np
-from hybrid.hybrid_simulation import HybridSimulation
-from collections import OrderedDict, namedtuple
 import traceback
+from hybrid.hybrid_simulation import HybridSimulation
 
-class DesignCandidate(object):
-    pass
 
-class OptimizationProblem(): #HybridSizingProblem
+class HybridSizingProblem():  # OptimizationProblem (unwritten base)
     """
     Optimize the hybrid system sizing design variables
     """
+    sep = '::'
+
     def __init__(self,
                  simulation: HybridSimulation,
-                 design_variables: OrderedDict) -> None:
+                 design_variables: dict) -> None:
         """
         design_variables: dict of hybrid technologies each with a dict of design variable attributes
         """
-        # super().__init__(simulation)
+        # super().__init__(simulation) missing base class
         self.simulation = simulation
         self.design_variables = design_variables
         self._check_design_variables()
 
-        # works for DesignCandidate, but each of the tech candidates also need global (module) names
-        globals()[self.DesignCandidate.__name__] = self.DesignCandidate
-        for tech in self.tech_variables:
-            setattr(self, tech.__name__, tech)
-            globals()[tech.__name__] = getattr(self, tech.__name__)
+    def _check_design_variables(self) -> None:
+        """
+        validate design_variables, bounds, prior
+        """
+        self.candidate_fields = [self.sep.join([tech, field])
+                                 for tech,val in self.design_variables.items()
+                                 for field,_ in val.items()]
+        self.n_dim = len(self.candidate_fields)
 
-    def _get_bounds(self) -> None:
+        self._parse_bounds()
+        self._validate_prior()
+
+    def _parse_bounds(self) -> None:
         try:
             bounds = []
 
@@ -48,6 +53,7 @@ class OptimizationProblem(): #HybridSizingProblem
             raise KeyError(f"{key}:{subkey} needs simple bounds defined as 'bounds':(lower,upper)") from error
 
     def _validate_prior(self) -> None:
+        return
         priors = (0.5 * np.ones(self.candidate_idx[-1])) * (self.upper_bounds - self.lower_bounds) + self.lower_bounds
         i = 0
 
@@ -65,38 +71,25 @@ class OptimizationProblem(): #HybridSizingProblem
         self._check_candidate(candidate)
         self._set_simulation_to_candidate(candidate)
 
-    def _check_design_variables(self) -> None:
-        """
-        validate design_variables, bounds, prior
-        """
-        self.n_dim = len([key for sub in self.design_variables.values()
-                              for key in sub.keys()])
-        self._get_bounds()
 
-        # create candidate factory functions
-        self.tech_variables = [namedtuple(key, val.keys()) for key,val in self.design_variables.items()]
-        self.DesignCandidate = namedtuple('DesignCandidate', self.design_variables.keys())
-
-        num_vars = [len(x._fields) for x in self.tech_variables]
-        self.candidate_idx = np.concatenate(([0], np.cumsum(num_vars)))
-        self._validate_prior()
 
     def _set_simulation_to_candidate(self,
-                                     candidate: namedtuple) -> None:
-        for tech_key in candidate._fields:
+                                     candidate: tuple) -> None:
+        for field,value in candidate:
+            tech_key, key = field.split(self.sep)
             tech_model = getattr(self.simulation, tech_key)
-            tech_variables = getattr(candidate, tech_key)
-            for key in tech_variables._fields:
-                if hasattr(tech_model, key):
-                    setattr(tech_model, key, getattr(tech_variables, key))
-                else:
-                    tech_model.value(key, getattr(tech_variables, key))
+
+            if hasattr(tech_model, key):
+                setattr(tech_model, key, value)
+            else:
+                tech_model.value(key, value)
 
     def _check_candidate(self,
-                         candidate: namedtuple) -> None:
+                         candidate: tuple) -> None:
         """
 
         """
+        return
         assert isinstance(candidate, self.DesignCandidate), \
             f"Design candidate must be a NamedTuple created with {self.__name__}.candidate...() methods"
 
@@ -108,18 +101,18 @@ class OptimizationProblem(): #HybridSizingProblem
                     f"{field}:{subfield} invalid value ({value}), outside 'bounds':({self.lower_bounds[i]},{self.upper_bounds[i]})"
                 i += 1
 
-    def candidate_from_array(self, values: np.array) -> namedtuple:
-        tech_candidates = [self.tech_variables[i](*values[idx[0]:idx[1]]) for i, idx in
-                           enumerate(zip(self.candidate_idx[:-1], self.candidate_idx[1:]))]
-        return self.DesignCandidate(*tech_candidates)
+    def candidate_from_array(self, values: np.array) -> tuple:
+        candidate = tuple([(field, val)
+                           for field, val in zip(self.candidate_fields, values)])
+        return candidate
 
-    def candidate_from_unit_array(self, values: np.array) -> namedtuple:
+    def candidate_from_unit_array(self, values: np.array) -> tuple:
         scaled_values = values * (self.upper_bounds - self.lower_bounds) + self.lower_bounds
-        tech_candidates = [self.tech_variables[i](*scaled_values[idx[0]:idx[1]]) for i, idx in
-                           enumerate(zip(self.candidate_idx[:-1], self.candidate_idx[1:]))]
-        return self.DesignCandidate(*tech_candidates)
+        candidate = tuple([(field, val)
+                           for field,val in zip(self.candidate_fields, scaled_values)])
+        return candidate
 
-    def evaluate_objective(self, candidate: namedtuple) -> dict:
+    def evaluate_objective(self, candidate: tuple) -> dict:
         result = dict()
 
         try:

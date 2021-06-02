@@ -52,7 +52,7 @@ class Task(object):
         self.upper_bounds = (10, 15)
 
     def __call__(self):
-        time.sleep(0.5) # pretend to take some time to do the work
+        # time.sleep(0.5) # pretend to take some time to do the work
         x = [self.a*(self.upper_bounds[0]-self.lower_bounds[0]) + self.lower_bounds[0],
              self.b*(self.upper_bounds[1]-self.lower_bounds[1]) + self.lower_bounds[1]]
         try:
@@ -119,7 +119,7 @@ if __name__ == '__main__':
     Lots of logging print statements
     """
     times = []
-    for num_workers in range(1, 6): #range(1, 11):
+    for num_workers in [3]:#range(1, 6): #range(1, 11):
         # Establish communication queues
         tasks = multiprocessing.JoinableQueue()
         manager = multiprocessing.Manager()
