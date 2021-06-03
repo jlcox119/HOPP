@@ -5,7 +5,8 @@ import concurrent.futures as cf
 import threading
 import multiprocessing
 from optimization_problem_alt import HybridSizingProblem
-# from collections import namedtuple
+import pickle
+
 
 class OptimizerInterrupt(Exception):
     pass
@@ -141,6 +142,23 @@ class OptimizationDriver():
         print(f'Best Objective: {best_objective:.2f}')
         print(f'Best Candidate:\n  {candidate_str}')
 
+    def write_cache(self, filename=None):
+        if filename is None:
+            filename = 'driver_cache.pkl'
+
+        cache = self.cache.copy()
+        with open(filename, 'wb') as f:
+            pickle.dump(cache, f)
+
+    def read_cache(self, filename=None):
+        if filename is None:
+            filename = 'driver_cache.pkl'
+
+        with open(filename, 'rb') as f:
+            cache = pickle.load(f)
+
+        self.cache.update(cache)
+
     def wrap_objective(self):
         # obj = self.problem.evaluate_objective
         """
@@ -206,7 +224,7 @@ class OptimizationDriver():
 
         return wrapper
 
-    def run(self, optimizers, opt_config):
+    def run(self, optimizers, opt_config, cache_file=None):
         self.start_time = time.time()
         self.eval_count = 0
 
@@ -215,6 +233,9 @@ class OptimizationDriver():
         self.manager = multiprocessing.Manager()
         self.cache = self.manager.dict()
         self.lock = threading.Lock()
+
+        if cache_file is not None:
+            self.read_cache(cache_file)
 
         # Start workers
         n_opt = len(optimizers)

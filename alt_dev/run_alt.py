@@ -34,6 +34,7 @@ if __name__ == '__main__':
 
     # Driver init
     driver = OptimizationDriver(problem_setup, **driver_config)
-    best_candidate, best_objective = driver.run(optimizers, opt_config)
+
+    best_candidate, best_objective = driver.run(optimizers, opt_config, cache_file='driver_cache.pkl')
 
     print(driver.cache_info)
