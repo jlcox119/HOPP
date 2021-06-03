@@ -30,7 +30,7 @@ if __name__ == '__main__':
 
     # Optimizer and driver config
     opt_config = dict(n_dim=5, n_trials=50, with_count=True)
-    driver_config = dict(time_limit=60, eval_limit=100, obj_limit=-3e8)
+    driver_config = dict(time_limit=20, eval_limit=100, obj_limit=-3e8)
 
     # Driver init
     driver = OptimizationDriver(problem_setup, **driver_config)
