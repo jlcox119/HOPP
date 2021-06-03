@@ -1,0 +1,6 @@
+Collecting NREL-PySAM
+  Downloading NREL_PySAM-2.2.2-cp38-cp38-win_amd64.whl (20.2 MB)
+Collecting NREL-PySAM-stubs
+  Downloading NREL_PySAM_stubs-2.2.2-py3-none-any.whl (129 kB)
+Installing collected packages: NREL-PySAM-stubs, NREL-PySAM
+Successfully installed NREL-PySAM-2.2.2 NREL-PySAM-stubs-2.2.2

@@ -79,20 +79,20 @@ def func(x, name=None, tasks=None, cache=None, lock=None):
             while (result := cache[candidate]) is None:
                 time.sleep(0.01)
 
-            with lock:
-                print(f'{name} Cache wait:', candidate, result)
+            # with lock:
+            #     print(f'{name} Cache wait:', candidate, result)
             return result
 
         else:
             # Result available in cache, no work needed
-            with lock:
-                print(f'{name} Cache hit:', candidate, result)
+            # with lock:
+            #     print(f'{name} Cache hit:', candidate, result)
             return result
 
     except KeyError:
         # Candidate not in cache
         cache[candidate] = None # indicates waiting in cache
-        print(f'{name} Candidate entering task queue:', candidate)
+        # print(f'{name} Candidate entering task queue:', candidate)
         tasks.put(Task(*candidate))
         lock.release()
 
@@ -100,8 +100,8 @@ def func(x, name=None, tasks=None, cache=None, lock=None):
         while (result := cache[candidate]) is None:
             time.sleep(0.01)
 
-        with lock:
-            print(f'{name} Task return:', candidate, result)
+        # with lock:
+        #     print(f'{name} Task return:', candidate, result)
 
         return result
 
@@ -119,7 +119,7 @@ if __name__ == '__main__':
     Lots of logging print statements
     """
     times = []
-    for num_workers in [3]:#range(1, 6): #range(1, 11):
+    for num_workers in [12]:#range(1, 6): #range(1, 11):
         # Establish communication queues
         tasks = multiprocessing.JoinableQueue()
         manager = multiprocessing.Manager()
@@ -137,11 +137,14 @@ if __name__ == '__main__':
         start = time.perf_counter()
         lock = threading.Lock()
 
-        n_opt = 5
+        n_opt = 12
         obj = [partial(func, name=str(i), tasks=tasks, cache=cache, lock=lock) for i in range(n_opt)]
+        for i in range(n_opt):
+            obj[i].__name__ = humpday.OPTIMIZERS[i].__name__
+
         opt = [partial(humpday.OPTIMIZERS[i], n_dim=2, n_trials=50, with_count=True) for i in range(n_opt)]
 
-        with cf.ThreadPoolExecutor(max_workers=10) as executor:
+        with cf.ThreadPoolExecutor(max_workers=n_opt) as executor:
             threads = {executor.submit(opt[i], obj[i]): i for i in range(n_opt)}
 
             for future in cf.as_completed(threads):
@@ -164,7 +167,7 @@ if __name__ == '__main__':
             w.join()
 
         # Start printing results
-        for key, value in cache.items():
-            print('Result:', key, value)
+        # for key, value in cache.items():
+        #     print('Result:', key, value)
 
     print(times)
