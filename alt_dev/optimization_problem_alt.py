@@ -162,4 +162,6 @@ class HybridSizingProblem():  # OptimizationProblem (unwritten base)
             result['exception'] = traceback.format_exc()
             result['objective'] = np.nan
 
+        # raise KeyboardInterrupt
+
         return candidate, result

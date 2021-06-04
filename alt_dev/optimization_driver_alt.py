@@ -6,6 +6,7 @@ import threading
 import multiprocessing
 from optimization_problem_alt import HybridSizingProblem
 import pickle
+import signal
 
 
 class OptimizerInterrupt(Exception):
@@ -25,6 +26,7 @@ class Worker(multiprocessing.Process):
 
     def run(self):
         problem = self.setup()
+        # signal.signal(signal.SIGINT, signal.SIG_IGN)
 
         proc_name = self.name
         while True:
@@ -38,7 +40,15 @@ class Worker(multiprocessing.Process):
                 break
 
             # Execute task
-            candidate, result = problem.evaluate_objective(candidate)
+            try:
+                candidate, result = problem.evaluate_objective(candidate)
+
+            except KeyboardInterrupt:
+                self.task_queue.task_done()
+                self.cache[candidate] = OptimizerInterrupt
+
+                print('%s: KeyBoardInterrupt' % proc_name)
+                break
 
             self.task_queue.task_done()
             self.cache[candidate] = result
@@ -90,6 +100,10 @@ class OptimizationDriver():
                            'total_evals': 0}
 
     def check_interrupt(self):
+        if self.force_stop:
+            print(f"Driver exiting, KeyBoardInterrupt")
+            raise OptimizerInterrupt
+
         self.iter_start = time.time()
         elapsed = self.iter_start- self.start_time
         if elapsed > self.options['time_limit']:
@@ -103,6 +117,8 @@ class OptimizationDriver():
         if (self.best_obj is not None) and (self.best_obj <= self.options['obj_limit']):
             print(f"Driver exiting, obj limit: {self.options['obj_limit']}")
             raise OptimizerInterrupt
+
+
 
     def print_log_header(self):
         self.log_headers = ['Obj_Evals', 'Best_Objective', 'Eval_Time', 'Total_Time']
@@ -183,6 +199,10 @@ class OptimizationDriver():
                     while (result := self.cache[candidate]) is None:
                         time.sleep(0.01)
 
+                    if not isinstance(result, dict):
+                        self.force_stop = True
+                        self.check_interrupt()
+
                     # with self.lock:
                     #     print(f'{name} Cache wait:', candidate, result)
                     return result['objective']
@@ -206,6 +226,10 @@ class OptimizationDriver():
                 while (result := self.cache[candidate]) is None:
                     time.sleep(0.01)
 
+                if not isinstance(result, dict):
+                    self.force_stop = True
+                    self.check_interrupt()
+
                 if (self.best_obj is None) or (result['objective'] < self.best_obj):
                     self.best_obj = result['objective']
                     reason = 'new_best'
@@ -227,6 +251,7 @@ class OptimizationDriver():
     def run(self, optimizers, opt_config, cache_file=None):
         self.start_time = time.time()
         self.eval_count = 0
+        self.force_stop = False
 
         # Establish communication queues
         self.tasks = multiprocessing.JoinableQueue()
@@ -259,28 +284,43 @@ class OptimizationDriver():
 
         # opt[0](obj[0])
         with cf.ThreadPoolExecutor(max_workers=n_opt) as executor:
-            threads = {executor.submit(opt[i], obj[i]):name for i,name in enumerate(self.opt_names)}
+            try:
+                threads = {executor.submit(opt[i], obj[i]):name for i,name in enumerate(self.opt_names)}
 
-            for future in cf.as_completed(threads):
-                name = threads[future]
-                try:
-                    data = future.result()
-                except Exception as exc:
-                    print('%r generated an exception: %s' % (name, exc))
-                else:
-                    print(f'Optimizer {name} finished', data)
+                for future in cf.as_completed(threads):
+                    name = threads[future]
+                    try:
+                        data = future.result()
+                    except Exception as exc:
+                        print('%r generated an exception: %s' % (name, exc))
+                    else:
+                        print(f'Optimizer {name} finished', data)
 
+            except KeyboardInterrupt:
+                pass
+
+        print('after context end')
         # End worker processes
-        for i in range(num_workers):
-            self.tasks.put(None)
+        if not self.force_stop:
+            for i in range(num_workers):
+                self.tasks.put(None)
 
         # Wait for all of the tasks to finish
         self.tasks.join()
         for w in workers:
             w.join()
 
+        print('clean up tasks')
+        pop_list = []
+        for key, value in self.cache.items():
+            if not isinstance(value, dict):
+                pop_list.append(key)
+
+        _ = [self.cache.pop(key) for key in pop_list]
+
         best_candidate, best_result = min(self.cache.items(), key=lambda item: item[1]['objective'])
         self.print_log_end(best_candidate, best_result['objective'])
         print(self.cache)
 
+        print('return call')
         return best_candidate, best_result['objective']
