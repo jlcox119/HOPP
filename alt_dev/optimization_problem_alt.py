@@ -24,7 +24,7 @@ class HybridSizingProblem():  # OptimizationProblem (unwritten base)
     def _parse_design_variables(self,
                                 design_variables: dict) -> None:
         """
-        validate design_variables, bounds, prior
+
         """
         self.design_variables = design_variables
 

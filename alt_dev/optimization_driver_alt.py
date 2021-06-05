@@ -4,9 +4,9 @@ import numpy as np
 import concurrent.futures as cf
 import threading
 import multiprocessing
-from optimization_problem_alt import HybridSizingProblem
+# from optimization_problem_alt import HybridSizingProblem
 import pickle
-import signal
+import queue
 
 
 class OptimizerInterrupt(Exception):
@@ -30,17 +30,18 @@ class Worker(multiprocessing.Process):
 
         proc_name = self.name
         while True:
-            # Get task from queue
-            candidate = self.task_queue.get()
-
-            if candidate is None:
-                # Signal shutdown
-                print('%s: Exiting' % proc_name)
-                self.task_queue.task_done()
-                break
-
-            # Execute task
             try:
+                candidate = None
+                # Get task from queue
+                candidate = self.task_queue.get()
+
+                if candidate is None:
+                    # Signal shutdown
+                    print('%s: Exiting' % proc_name)
+                    self.task_queue.task_done()
+                    break
+
+                # Execute task
                 candidate, result = problem.evaluate_objective(candidate)
 
             except KeyboardInterrupt:
@@ -299,9 +300,22 @@ class OptimizationDriver():
             except KeyboardInterrupt:
                 pass
 
-        print('after context end')
+        print('after context end', self.force_stop)
+
         # End worker processes
-        if not self.force_stop:
+        if self.force_stop:
+            try:
+                while True:
+                    self.tasks.get(block=False)
+                    self.tasks.task_done()
+
+            except queue.Empty:
+                pass
+
+            finally:
+                print('task queue emptied')
+
+        else:
             for i in range(num_workers):
                 self.tasks.put(None)
 
