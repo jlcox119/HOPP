@@ -79,20 +79,20 @@ def func(x, name=None, tasks=None, cache=None, lock=None):
             while (result := cache[candidate]) is None:
                 time.sleep(0.01)
 
-            # with lock:
-            #     print(f'{name} Cache wait:', candidate, result)
+            with lock:
+                print(f'{name} Cache wait:', candidate, result)
             return result
 
         else:
             # Result available in cache, no work needed
-            # with lock:
-            #     print(f'{name} Cache hit:', candidate, result)
+            with lock:
+                print(f'{name} Cache hit:', candidate, result)
             return result
 
     except KeyError:
         # Candidate not in cache
         cache[candidate] = None # indicates waiting in cache
-        # print(f'{name} Candidate entering task queue:', candidate)
+        print(f'{name} Candidate entering task queue:', candidate)
         tasks.put(Task(*candidate))
         lock.release()
 
@@ -100,8 +100,8 @@ def func(x, name=None, tasks=None, cache=None, lock=None):
         while (result := cache[candidate]) is None:
             time.sleep(0.01)
 
-        # with lock:
-        #     print(f'{name} Task return:', candidate, result)
+        with lock:
+            print(f'{name} Task return:', candidate, result)
 
         return result
 

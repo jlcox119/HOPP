@@ -35,6 +35,7 @@ class HybridSizingProblem():  # OptimizationProblem (unwritten base)
 
             for key, val in self.design_variables.items():
                 for subkey, subval in val.items():
+
                     field_name = self.sep.join([key, subkey])
                     if field_name in field_set:
                         raise Exception(f"{field_name} repeated in design variables")

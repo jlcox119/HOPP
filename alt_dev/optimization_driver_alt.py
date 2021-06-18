@@ -100,6 +100,49 @@ class OptimizationDriver():
                            'size': 0,
                            'total_evals': 0}
 
+    def init_parallel_workers(self, num_workers):
+        self.tasks = multiprocessing.JoinableQueue()
+        self.manager = multiprocessing.Manager()
+        self.cache = self.manager.dict()
+        self.lock = threading.Lock()
+
+        print(f'Creating {num_workers} workers')
+        self.workers = [Worker(self.tasks, self.cache, self.setup)
+                           for _ in range(num_workers)]
+
+        for w in self.workers:
+            w.start()
+
+    def cleanup_parallel(self):
+        if self.force_stop:
+            try:
+                while True:
+                    self.tasks.get(block=False)
+                    self.tasks.task_done()
+
+            except queue.Empty:
+                pass
+
+            finally:
+                print('task queue emptied')
+
+        else:
+            for i in range(len(self.workers)):
+                self.tasks.put(None)
+
+        # Wait for all of the tasks to finish
+        self.tasks.join()
+        for w in self.workers:
+            w.join()
+
+        print('clean up tasks')
+        pop_list = []
+        for key, value in self.cache.items():
+            if not isinstance(value, dict):
+                pop_list.append(key)
+
+        _ = [self.cache.pop(key) for key in pop_list]
+
     def check_interrupt(self):
         if self.force_stop:
             print(f"Driver exiting, KeyBoardInterrupt")
@@ -164,17 +207,20 @@ class OptimizationDriver():
             filename = 'driver_cache.pkl'
 
         cache = self.cache.copy()
+        cache_info = self.cache_info.copy()
+
         with open(filename, 'wb') as f:
-            pickle.dump(cache, f)
+            pickle.dump((cache, cache_info), f)
 
     def read_cache(self, filename=None):
         if filename is None:
             filename = 'driver_cache.pkl'
 
         with open(filename, 'rb') as f:
-            cache = pickle.load(f)
+            cache, cache_info = pickle.load(f)
 
         self.cache.update(cache)
+        self.cache_info.update(cache_info)
 
     def wrap_objective(self):
         # obj = self.problem.evaluate_objective
@@ -249,32 +295,23 @@ class OptimizationDriver():
 
         return wrapper
 
-    def run(self, optimizers, opt_config, cache_file=None):
+    def parallel_optimize(self, optimizers, opt_config, cache_file=None):
+        # setup
         self.start_time = time.time()
         self.eval_count = 0
         self.force_stop = False
 
-        # Establish communication queues
-        self.tasks = multiprocessing.JoinableQueue()
-        self.manager = multiprocessing.Manager()
-        self.cache = self.manager.dict()
-        self.lock = threading.Lock()
+        # Establish communication queues and execution workers
+        # Start workers
+        n_opt = len(optimizers)
+        num_workers = min(self.options['n_proc'], n_opt)
+
+        self.init_parallel_workers(num_workers)
 
         if cache_file is not None:
             self.read_cache(cache_file)
 
-        # Start workers
-        n_opt = len(optimizers)
-        num_workers = min(self.options['n_proc'], n_opt)
-        print('Creating %d workers' % num_workers)
-        workers = [Worker(self.tasks, self.cache, self.setup)
-                   for _ in range(num_workers)]
-
-        for w in workers:
-            w.start()
-
-        # Starting threads that act like optimizers
-
+        # Starting optimizer names
         self.opt_names = [opt.__name__ for opt in optimizers]
         obj = [partial(self.objective, name=name) for name in self.opt_names]
         opt = [partial(opt, **opt_config) for opt in optimizers]
@@ -283,7 +320,6 @@ class OptimizationDriver():
 
         self.print_log_header()
 
-        # opt[0](obj[0])
         with cf.ThreadPoolExecutor(max_workers=n_opt) as executor:
             try:
                 threads = {executor.submit(opt[i], obj[i]):name for i,name in enumerate(self.opt_names)}
@@ -303,34 +339,53 @@ class OptimizationDriver():
         print('after context end', self.force_stop)
 
         # End worker processes
-        if self.force_stop:
-            try:
-                while True:
-                    self.tasks.get(block=False)
-                    self.tasks.task_done()
+        self.cleanup_parallel()
 
-            except queue.Empty:
+        best_candidate, best_result = min(self.cache.items(), key=lambda item: item[1]['objective'])
+        self.print_log_end(best_candidate, best_result['objective'])
+        print(self.cache)
+
+        print('return call')
+        return best_candidate, best_result['objective']
+
+    def parallel_execute(self, candidates, cache_file=None):
+        # setup
+        self.start_time = time.time()
+        self.eval_count = 0
+        self.force_stop = False
+
+        # Establish communication queues and execution workers
+        # Start workers
+        num_workers = min(self.options['n_proc'], len(candidates))
+        self.init_parallel_workers(num_workers)
+
+        if cache_file is not None:
+            self.read_cache(cache_file)
+
+        self.opt_names = ['test']
+        self.print_log_header()
+
+        obj = [partial(self.objective, name=str(name)) for name in range(len(candidates))]
+        for i in range(len(candidates)):
+            obj[i].__name__ = str(i)
+
+        with cf.ThreadPoolExecutor(max_workers=num_workers) as executor:
+            try:
+                threads = {executor.submit(obj[i], candidate): str(i) for i, candidate in enumerate(candidates)}
+
+                for future in cf.as_completed(threads):
+                    name = threads[future]
+                    try:
+                        data = future.result()
+
+                    except Exception as exc:
+                        print('%r generated an exception: %s' % (name, exc))
+
+            except KeyboardInterrupt:
                 pass
 
-            finally:
-                print('task queue emptied')
-
-        else:
-            for i in range(num_workers):
-                self.tasks.put(None)
-
-        # Wait for all of the tasks to finish
-        self.tasks.join()
-        for w in workers:
-            w.join()
-
-        print('clean up tasks')
-        pop_list = []
-        for key, value in self.cache.items():
-            if not isinstance(value, dict):
-                pop_list.append(key)
-
-        _ = [self.cache.pop(key) for key in pop_list]
+        # End worker processes
+        self.cleanup_parallel()
 
         best_candidate, best_result = min(self.cache.items(), key=lambda item: item[1]['objective'])
         self.print_log_end(best_candidate, best_result['objective'])

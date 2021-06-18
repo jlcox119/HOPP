@@ -6,6 +6,7 @@ import warnings
 warnings.simplefilter("ignore")
 import humpday
 warnings.simplefilter("default")
+import pyDOE
 
 
 def problem_setup():
@@ -35,6 +36,10 @@ if __name__ == '__main__':
     # Driver init
     driver = OptimizationDriver(problem_setup, **driver_config)
 
-    best_candidate, best_objective = driver.run(optimizers, opt_config)#, cache_file='driver_cache.pkl')
+    # best_candidate, best_objective = driver.parallel_optimize(optimizers, opt_config)#, cache_file='driver_cache.pkl')
+
+    candidates = pyDOE.lhs(5, criterion='center', samples=120)
+    print(candidates)
+    best_candidate, best_objective = driver.parallel_execute(candidates)
 
     print(driver.cache_info)
