@@ -16,8 +16,10 @@ class HybridSizingProblem():  # OptimizationProblem (unwritten base)
         """
         design_variables: dict of hybrid technologies each with a dict of design variable attributes
         """
-        # super().__init__(simulation) missing base class
+        # super().__init__(simulation) should not be done on init
         # self.simulation = simulation
+
+
         self.simulation = None
         self._parse_design_variables(design_variables)
 
@@ -62,7 +64,7 @@ class HybridSizingProblem():  # OptimizationProblem (unwritten base)
     def _check_candidate(self,
                          candidate: tuple) -> None:
         """
-
+        ### Is this necessary?
         """
         assert (actual_length := len(candidate)) == self.n_dim, \
             f"Expected candidate with {self.n_dim} (field,value) pairs, got candidate of length {actual_length}"

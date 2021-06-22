@@ -1,12 +1,12 @@
-from functools import wraps, partial
 import time
+import pickle
+import queue
 import numpy as np
+from functools import wraps, partial
+
 import concurrent.futures as cf
 import threading
 import multiprocessing
-# from optimization_problem_alt import HybridSizingProblem
-import pickle
-import queue
 
 
 class OptimizerInterrupt(Exception):
@@ -25,13 +25,13 @@ class Worker(multiprocessing.Process):
         self.setup = setup
 
     def run(self):
+        # Create a new problem for the worker
         problem = self.setup()
-        # signal.signal(signal.SIGINT, signal.SIG_IGN)
-
         proc_name = self.name
+        candidate = None
+
         while True:
             try:
-                candidate = None
                 # Get task from queue
                 candidate = self.task_queue.get()
 
@@ -45,8 +45,11 @@ class Worker(multiprocessing.Process):
                 candidate, result = problem.evaluate_objective(candidate)
 
             except KeyboardInterrupt:
+                # Exit cleanly
                 self.task_queue.task_done()
-                self.cache[candidate] = OptimizerInterrupt
+
+                if candidate is not None:
+                    self.cache[candidate] = OptimizerInterrupt
 
                 print('%s: KeyBoardInterrupt' % proc_name)
                 break
