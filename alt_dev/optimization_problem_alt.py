@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import traceback
 from hybrid.hybrid_simulation import HybridSimulation
@@ -125,7 +127,7 @@ class HybridSizingProblem():  # OptimizationProblem (unwritten base)
                         'grid': interconnection_size_mw}
 
         # Create model
-        dispatch_options = {'battery_dispatch': 'heuristic',
+        dispatch_options = {'battery_dispatch': 'simple', #heuristic
                             'n_look_ahead_periods': 24}
         hybrid_plant = HybridSimulation(technologies,
                                         site_info,
@@ -145,7 +147,7 @@ class HybridSizingProblem():  # OptimizationProblem (unwritten base)
         fixed_dispatch.extend([0.0] * 6)
 
         # Set fixed dispatch
-        hybrid_plant.battery.dispatch.set_fixed_dispatch(fixed_dispatch)
+        # hybrid_plant.battery.dispatch.set_fixed_dispatch(fixed_dispatch)
 
         self.simulation = hybrid_plant
 
@@ -157,6 +159,7 @@ class HybridSizingProblem():  # OptimizationProblem (unwritten base)
         try:
             self._check_candidate(candidate)
             self._set_simulation_to_candidate(candidate)
+            self.simulation.simulate(1)
             self.simulation.simulate(1)
 
             result['objective'] = self.simulation.net_present_values.hybrid

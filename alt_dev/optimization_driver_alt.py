@@ -37,7 +37,7 @@ class Worker(multiprocessing.Process):
 
                 if candidate is None:
                     # Signal shutdown
-                    print(f"{proc_name}: Exiting")
+                    # print(f"{proc_name}: Exiting")
                     self.task_queue.task_done()
                     break
 
@@ -55,7 +55,7 @@ class Worker(multiprocessing.Process):
                 if candidate is not None:
                     self.cache[candidate] = OptimizerInterrupt
 
-                print(f"{proc_name}: KeyBoardInterrupt")
+                # print(f"{proc_name}: KeyBoardInterrupt")
                 break
 
             # Mark task as done and return result
@@ -152,20 +152,20 @@ class OptimizationDriver():
 
     def check_interrupt(self):
         if self.force_stop:
-            print("Driver exiting, KeyBoardInterrupt")
+            # print("Driver exiting, KeyBoardInterrupt")
             raise OptimizerInterrupt
 
         elapsed = time.time() - self.start_time
         if elapsed > self.options['time_limit']:
-            print(f"Driver exiting, time limit: {self.options['time_limit']} secs")
+            # print(f"Driver exiting, time limit: {self.options['time_limit']} secs")
             raise OptimizerInterrupt
 
         if self.eval_count > self.options['eval_limit']:
-            print(f"Driver exiting, eval limit: {self.options['eval_limit']}")
+            # print(f"Driver exiting, eval limit: {self.options['eval_limit']}")
             raise OptimizerInterrupt
 
         if (self.best_obj is not None) and (self.best_obj <= self.options['obj_limit']):
-            print(f"Driver exiting, obj limit: {self.options['obj_limit']}")
+            # print(f"Driver exiting, obj limit: {self.options['obj_limit']}")
             raise OptimizerInterrupt
 
 
@@ -227,7 +227,7 @@ class OptimizationDriver():
         Update with new parallel structre TODO
         """
         @wraps(self.wrapped_objective)
-        def wrapper(*args, name=None):
+        def wrapper(*args, name=None, idx=None):
             self.check_interrupt()
             candidate = self.get_candidate(*args)
             self.cache_info['total_evals'] += 1
@@ -239,10 +239,15 @@ class OptimizationDriver():
                 self.lock.release()
                 self.cache_info['hits'] += 1
 
-                if result is None:
+                if isinstance(result, int):
                     # In cache but not complete, poll cache
-                    while (result := self.cache[candidate]) is None:
-                        time.sleep(0.01)
+                    # while (result := self.cache[candidate]) is None:
+                    #     time.sleep(0.01)
+                    signal = self.conditions[result]
+                    with signal:
+                        signal.wait()
+
+                    result = self.cache[candidate]
 
                     if not isinstance(result, dict):
                         self.force_stop = True
@@ -258,14 +263,18 @@ class OptimizationDriver():
 
             except KeyError:
                 # Candidate not in cache
-                self.cache[candidate] = None  # indicates waiting in cache
+                self.cache[candidate] = idx  # indicates waiting condition
                 self.tasks.put((candidate, name))
                 self.lock.release()
                 self.cache_info['misses'] += 1
 
                 # Poll cache for available result (should be threading.Condition)
-                while (result := self.cache[candidate]) is None:
-                    time.sleep(0.01)
+                while isinstance(result := self.cache[candidate], int):
+                    time.sleep(1)
+
+                signal = self.conditions[idx]
+                with signal:
+                    signal.notifyAll()
 
                 if not isinstance(result, dict):
                     self.force_stop = True
@@ -279,9 +288,9 @@ class OptimizationDriver():
                     reason = ''
 
                 info = dict(eval_time=result['eval_time'], reason=reason)
-                self.eval_count += 1
 
                 with self.lock:
+                    self.eval_count += 1
                     self.print_log_line(info)
 
                 self.cache_info['size'] += 1
@@ -309,10 +318,12 @@ class OptimizationDriver():
 
         # Starting optimizer names
         self.opt_names = [opt.__name__ for opt in optimizers]
-        obj = [partial(self.wrapped_objective(), name=name) for name in self.opt_names]
+        obj = [partial(self.wrapped_objective(), name=name, idx=i) for i,name in enumerate(self.opt_names)]
         opt = [partial(opt, **opt_config) for opt in optimizers]
         for i in range(n_opt):
             obj[i].__name__ = self.opt_names[i]
+
+        self.conditions = [threading.Condition() for _ in range(n_opt)]
 
         self.print_log_header()
 
@@ -357,9 +368,11 @@ class OptimizationDriver():
         self.opt_names = ['test']
         self.print_log_header()
 
-        obj = [partial(self.wrapped_objective(), name=str(name)) for name in range(len(candidates))]
+        obj = [partial(self.wrapped_objective(), name=str(name), idx=name) for name in range(len(candidates))]
         for i in range(len(candidates)):
             obj[i].__name__ = str(i)
+
+        self.conditions = [threading.Condition() for _ in range(len(candidates))]
 
         with cf.ThreadPoolExecutor(max_workers=num_workers) as executor:
             try:
