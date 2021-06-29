@@ -2,11 +2,16 @@ import time
 import pickle
 import queue
 import numpy as np
-from functools import wraps, partial
+from functools import wraps, partial, reduce
 
 import concurrent.futures as cf
 import threading
 import multiprocessing
+import logging
+
+
+def recursive_get(result, keys):
+    return reduce(lambda sub_dict, key: sub_dict.get(key, {}), keys, result)
 
 
 class OptimizerInterrupt(Exception):
@@ -24,7 +29,11 @@ class Worker(multiprocessing.Process):
         self.cache = cache
         self.setup = setup
 
+        logging.info("Worker process init")
+
     def run(self):
+        logging.info("Worker process startup tasks")
+
         # Create a new problem for the worker
         problem = self.setup()
         proc_name = self.name
@@ -34,10 +43,11 @@ class Worker(multiprocessing.Process):
             try:
                 # Get task from queue
                 candidate, name = self.task_queue.get()
+                logging.info(f"Worker process got {candidate} from queue")
 
                 if candidate is None:
                     # Signal shutdown
-                    # print(f"{proc_name}: Exiting")
+                    logging.info(f"Worker process got None from queue, exiting")
                     self.task_queue.task_done()
                     break
 
@@ -55,12 +65,14 @@ class Worker(multiprocessing.Process):
                 if candidate is not None:
                     self.cache[candidate] = OptimizerInterrupt
 
-                # print(f"{proc_name}: KeyBoardInterrupt")
+                logging.info(f"Worker process got KeyboardInterrupt, exiting")
                 break
 
             # Mark task as done and return result
             self.task_queue.task_done()
             self.cache[candidate] = result
+            logging.info(f"Worker process calculated objective for {candidate}")
+
         return
 
 
@@ -79,6 +91,7 @@ class OptimizationDriver():
     def __init__(self,
                  setup,
                  **kwargs) -> None:
+        logging.info("Driver init tasks")
 
         self.problem = setup()
         self.setup = setup
@@ -108,6 +121,8 @@ class OptimizationDriver():
                            'total_evals': 0}
 
     def init_parallel_workers(self, num_workers):
+        logging.info("Create parallel workers")
+
         self.tasks = multiprocessing.JoinableQueue()
         self.manager = multiprocessing.Manager()
         self.cache = self.manager.dict()
@@ -120,7 +135,11 @@ class OptimizationDriver():
         for w in self.workers:
             w.start()
 
+        logging.info("Create parallel workers, done")
+
     def cleanup_parallel(self):
+        logging.info("Cleanup parallel workers")
+
         if self.force_stop:
             try:
                 # Mark all tasks complete
@@ -150,22 +169,28 @@ class OptimizationDriver():
 
         _ = [self.cache.pop(key) for key in pop_list]
 
+        logging.info("Cleanup tasks complete")
+
     def check_interrupt(self):
         if self.force_stop:
             # print("Driver exiting, KeyBoardInterrupt")
+            logging.info("Driver exiting, KeyBoardInterrupt")
             raise OptimizerInterrupt
 
         elapsed = time.time() - self.start_time
         if elapsed > self.options['time_limit']:
             # print(f"Driver exiting, time limit: {self.options['time_limit']} secs")
+            logging.info(f"Driver exiting, time limit: {self.options['time_limit']} secs")
             raise OptimizerInterrupt
 
         if self.eval_count > self.options['eval_limit']:
             # print(f"Driver exiting, eval limit: {self.options['eval_limit']}")
+            logging.info(f"Driver exiting, eval limit: {self.options['eval_limit']}")
             raise OptimizerInterrupt
 
         if (self.best_obj is not None) and (self.best_obj <= self.options['obj_limit']):
             # print(f"Driver exiting, obj limit: {self.options['obj_limit']}")
+            logging.info(f"Driver exiting, obj limit: {self.options['obj_limit']}")
             raise OptimizerInterrupt
 
 
@@ -224,10 +249,16 @@ class OptimizationDriver():
 
     def wrapped_objective(self):
         """
-        Update with new parallel structre TODO
+        Update with new parallel structure TODO
+        Should probably explain why I'm doing this
         """
+        eval_count = 0
+
         @wraps(self.wrapped_objective)
-        def wrapper(*args, name=None, idx=None):
+        def wrapper(*args, name=None, idx=None, objective_keys=None):
+            nonlocal eval_count
+            eval_count += 1
+
             self.check_interrupt()
             candidate = self.get_candidate(*args)
             self.cache_info['total_evals'] += 1
@@ -238,6 +269,7 @@ class OptimizationDriver():
                 result = self.cache[candidate]
                 self.lock.release()
                 self.cache_info['hits'] += 1
+                logging.info(f"Cache hit on candidate {candidate}")
 
                 if isinstance(result, int):
                     # In cache but not complete, poll cache
@@ -251,26 +283,32 @@ class OptimizationDriver():
 
                     if not isinstance(result, dict):
                         self.force_stop = True
+                        logging.info(f"Driver interrupt while waiting for objective evaluation")
                         self.check_interrupt()
 
-                    result['caller'].append(name)
-                    return result['objective']
+                    result['caller'].append((name, eval_count))
+                    logging.info(f"Cache wait returned on candidate {candidate}")
+                    return recursive_get(result, objective_keys)
 
                 else:
                     # Result available in cache, no work needed
-                    result['caller'].append(name)
-                    return result['objective']
+                    result['caller'].append((name, eval_count))
+                    logging.info(f"Cache hit returned on candidate {candidate}")
+                    return recursive_get(result, objective_keys)
 
             except KeyError:
                 # Candidate not in cache
                 self.cache[candidate] = idx  # indicates waiting condition
-                self.tasks.put((candidate, name))
+
+                self.tasks.put((candidate, (name, eval_count)))
+
                 self.lock.release()
                 self.cache_info['misses'] += 1
+                logging.info(f"Cache miss on candidate {candidate}")
 
                 # Poll cache for available result (should be threading.Condition)
                 while isinstance(result := self.cache[candidate], int):
-                    time.sleep(1)
+                    time.sleep(0.5)
 
                 signal = self.conditions[idx]
                 with signal:
@@ -278,10 +316,11 @@ class OptimizationDriver():
 
                 if not isinstance(result, dict):
                     self.force_stop = True
+                    logging.info(f"Driver interrupt while waiting for objective evaluation")
                     self.check_interrupt()
 
-                if (self.best_obj is None) or (result['objective'] < self.best_obj):
-                    self.best_obj = result['objective']
+                if (self.best_obj is None) or (result['net_present_values']['hybrid'] < self.best_obj):
+                    self.best_obj = result['net_present_values']['hybrid']
                     reason = 'new_best'
 
                 else:
@@ -294,13 +333,13 @@ class OptimizationDriver():
                     self.print_log_line(info)
 
                 self.cache_info['size'] += 1
-
-                return result['objective']
+                logging.info(f"Cache new item returned on candidate {candidate}")
+                return recursive_get(result, objective_keys)
 
         return wrapper
 
 
-    def parallel_optimize(self, optimizers, opt_config, cache_file=None):
+    def parallel_optimize(self, optimizers, opt_config, objective_keys, cache_file=None):
         # setup
         self.start_time = time.time()
         self.eval_count = 0
@@ -318,8 +357,9 @@ class OptimizationDriver():
 
         # Starting optimizer names
         self.opt_names = [opt.__name__ for opt in optimizers]
-        obj = [partial(self.wrapped_objective(), name=name, idx=i) for i,name in enumerate(self.opt_names)]
+        obj = [partial(self.wrapped_objective(), name=name, idx=i, objective_keys=objective_keys) for i,name in enumerate(self.opt_names)]
         opt = [partial(opt, **opt_config) for opt in optimizers]
+
         for i in range(n_opt):
             obj[i].__name__ = self.opt_names[i]
 
@@ -346,10 +386,10 @@ class OptimizationDriver():
         # End worker processes
         self.cleanup_parallel()
 
-        best_candidate, best_result = min(self.cache.items(), key=lambda item: item[1]['objective'])
-        self.print_log_end(best_candidate, best_result['objective'])
+        best_candidate, best_result = min(self.cache.items(), key=lambda item: recursive_get(item[1], objective_keys))
+        self.print_log_end(best_candidate, recursive_get(best_result, objective_keys))
 
-        return best_candidate, best_result['objective']
+        return best_candidate, recursive_get(best_result, objective_keys)
 
     def parallel_execute(self, candidates, cache_file=None):
         # setup
@@ -392,7 +432,4 @@ class OptimizationDriver():
         # End worker processes
         self.cleanup_parallel()
 
-        best_candidate, best_result = min(self.cache.items(), key=lambda item: item[1]['objective'])
-        self.print_log_end(best_candidate, best_result['objective'])
-
-        return best_candidate, best_result['objective']
+        return len(candidates)
