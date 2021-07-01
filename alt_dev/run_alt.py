@@ -42,13 +42,13 @@ if __name__ == '__main__':
     logging.info("Main Startup")
 
     # Driver config
-    driver_config = dict(eval_limit=10, obj_limit=-3e8, n_proc=6) #time_limit=40,
+    driver_config = dict(eval_limit=10, obj_limit=-3e8, n_proc=2) #time_limit=40,
 
     # Driver init
     driver = OptimizationDriver(problem_setup, **driver_config)
 
     # Optimizer callable init
-    optimizers = humpday.OPTIMIZERS[:5]
+    optimizers = humpday.OPTIMIZERS[:2]
     opt_config = dict(n_dim=5, n_trials=50, with_count=True)
     objective_keys = ['net_present_values', 'hybrid']
 

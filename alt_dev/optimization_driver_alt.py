@@ -22,7 +22,6 @@ def recursive_get(result: dict, keys: list) -> float:
     :param keys: List of keys in order from highest to lowest level in the nested dictionary
     :return: Float value output from the simulation
     """
-    print(type(result), keys)
     return reduce(lambda sub_dict, key: sub_dict.get(key, {}), keys, result)
 
 
@@ -302,13 +301,19 @@ class OptimizationDriver():
                         logging.info(f"Driver interrupt while waiting for objective evaluation")
                         self.check_interrupt()
 
-                    result['caller'].append((name, eval_count))
+                    with self.lock:
+                        result['caller'].append((name, eval_count))
+                        self.cache[candidate] = result
+
                     logging.info(f"Cache wait returned on candidate {candidate}")
                     return recursive_get(result, objective_keys)
 
                 else:
                     # Result available in cache, no work needed
-                    result['caller'].append((name, eval_count))
+                    with self.lock:
+                        result['caller'].append((name, eval_count))
+                        self.cache[candidate] = result
+
                     logging.info(f"Cache hit returned on candidate {candidate}")
                     return recursive_get(result, objective_keys)
 
@@ -439,6 +444,9 @@ class OptimizationDriver():
                     name = threads[future]
                     try:
                         data = future.result()
+
+                    except OptimizerInterrupt:
+                        pass
 
                     except Exception as exc:
                         print('%r generated an exception: %s' % (name, exc))
