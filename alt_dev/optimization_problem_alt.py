@@ -1,4 +1,4 @@
-import time
+
 import logging
 import numpy as np
 import traceback
@@ -11,17 +11,30 @@ SIMULATION_ATTRIBUTES = ['annual_energies', 'generation_profile', 'internal_rate
 
 class HybridSizingProblem():  # OptimizationProblem (unwritten base)
     """
-    Optimize the hybrid system sizing design variables
+    Problem class holding the design variable definitions and executing the HOPP simulation
     """
     sep = '::'
 
     def __init__(self,
                  design_variables: dict) -> None:
         """
-        design_variables: dict of hybrid technologies each with a dict of design variable attributes
+        Create the problem instance, the simulation is not created until the objective is evauated
+
+        :param design_variables: Nested dictionary defining the design variables of the problem
+            Example:
+                design_variables = dict(
+                    pv=      {'system_capacity_kw':  {'bounds':(25*1e3,  75*1e3),  'precision': 3},
+                              'tilt':                {'bounds':(30,      60),      'precision': 0},
+                              },
+                    battery= {'system_capacity_kwh': {'bounds':(150*1e3, 250*1e3), 'precision': 3},
+                              'system_capacity_kw':  {'bounds':(25*1e3,  75*1e3),  'precision': 3},
+                              'system_voltage_volts':{'bounds':(400,     600),     'precision': 1},
+                              },
+                )
+
+            Each design variable needs an upper and lower bound, precision defaults to -6 if not given
+        :return: None
         """
-        # super().__init__(simulation) should not be done on init
-        # self.simulation = simulation
 
         logging.info("Problem init")
         self.simulation = None
@@ -30,7 +43,10 @@ class HybridSizingProblem():  # OptimizationProblem (unwritten base)
     def _parse_design_variables(self,
                                 design_variables: dict) -> None:
         """
+        Parse the nested dictionary structure into separate attributes
 
+        :param design_variables: Nested dictionary defining the design variables of the problem
+        :return: None
         """
         self.design_variables = design_variables
 
@@ -43,22 +59,29 @@ class HybridSizingProblem():  # OptimizationProblem (unwritten base)
             for key, val in self.design_variables.items():
                 for subkey, subval in val.items():
 
+                    # Candidate field name, e.g., pv::tilt
                     field_name = self.sep.join([key, subkey])
+
+                    # Check if field name has been repeated
                     if field_name in field_set:
                         raise Exception(f"{field_name} repeated in design variables")
 
+                    # Assert that 'bounds' value is of length 2
                     field_bounds = subval['bounds']
                     assert (num_bounds := len(field_bounds)) == 2, \
                         f"{key}:{subkey} 'bounds' of length {num_bounds} not understood"
 
+                    # Assert that 'bounds' first value (lower) is less than or equal to the second value (upper)
                     assert field_bounds[0] <= field_bounds[1], \
                         f"{key}:{subkey} invalid 'bounds': {field_bounds[0]}(lower) > {field_bounds[1]}(upper)"
 
+                    # Check if precision key in sub-dictionary, if not set to default value
                     if 'precision' not in subval.keys():
                         precision = -6
                     else:
                         precision = subval['precision']
 
+                    # Assert that the precision value is an integer
                     assert isinstance(precision, int), \
                         f"{key}:{subkey} invalid 'precision': {precision} must be an integer value"
 
@@ -78,9 +101,12 @@ class HybridSizingProblem():  # OptimizationProblem (unwritten base)
 
     def _check_candidate(self,
                          candidate: tuple) -> None:
-        """
-        ### Is this necessary?
-        """
+        '''
+        Check
+
+        :param candidate:
+        :return:
+        '''
         assert (actual_length := len(candidate)) == self.n_dim, \
             f"Expected candidate with {self.n_dim} (field,value) pairs, got candidate of length {actual_length}"
 

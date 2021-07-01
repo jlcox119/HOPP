@@ -14,6 +14,9 @@ reload(logging)
 
 
 def problem_setup():
+    """
+
+    """
     # Define Design Optimization Variables
     design_variables = dict(
         pv=      {'system_capacity_kw':  {'bounds':(25*1e3,  75*1e3),  'precision': 3},
@@ -39,7 +42,7 @@ if __name__ == '__main__':
     logging.info("Main Startup")
 
     # Driver config
-    driver_config = dict(eval_limit=200, obj_limit=-3e8, n_proc=6) #time_limit=40,
+    driver_config = dict(eval_limit=10, obj_limit=-3e8, n_proc=6) #time_limit=40,
 
     # Driver init
     driver = OptimizationDriver(problem_setup, **driver_config)

@@ -1,6 +1,8 @@
 import time
 import pickle
 import queue
+import traceback
+
 import numpy as np
 from functools import wraps, partial, reduce
 
@@ -8,22 +10,36 @@ import concurrent.futures as cf
 import threading
 import multiprocessing
 import logging
+from typing import Callable
 
 
-def recursive_get(result, keys):
+def recursive_get(result: dict, keys: list) -> float:
+    """
+    Helper function for accessing a value in the nested result dictionary.
+    Equivalent to result[keys[0]][keys[1]][keys[2]]...
+
+    :param result: Simulation result nested dictionary
+    :param keys: List of keys in order from highest to lowest level in the nested dictionary
+    :return: Float value output from the simulation
+    """
+    print(type(result), keys)
     return reduce(lambda sub_dict, key: sub_dict.get(key, {}), keys, result)
 
 
 class OptimizerInterrupt(Exception):
+    """
+    Stub exception used by the driver to interrupt optimizers (e.g., if time limit has been exceeded)
+    """
     pass
 
 
 class Worker(multiprocessing.Process):
     """
-    Process worker to execute objective calculations
+    Process worker to execute objective calculations.
     """
 
-    def __init__(self, task_queue, cache, setup):
+    def __init__(self, task_queue: object, cache: object, setup: Callable) -> None:
+
         super().__init__()
         self.task_queue = task_queue
         self.cache = cache
@@ -376,7 +392,8 @@ class OptimizationDriver():
                     try:
                         data = future.result()
                     except Exception as exc:
-                        print(f"{name} generated an exception: {exc}")
+                        err_str = traceback.format_exc()
+                        print(f"{name} generated an exception: {err_str}")
                     else:
                         print(f"Optimizer {name} finished", data)
 
