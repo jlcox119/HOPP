@@ -34,11 +34,17 @@ class OptimizerInterrupt(Exception):
 
 class Worker(multiprocessing.Process):
     """
-    Process worker to execute objective calculations.
+    Process-contained worker to execute objective calculations.
     """
 
-    def __init__(self, task_queue: object, cache: object, setup: Callable) -> None:
+    def __init__(self, task_queue, cache: dict, setup: Callable) -> None:
+        """
+        Process-contained worker, having an independent instance of the problem and simulation to evaluate the objective
 
+        :param task_queue: multiprocessing.JoinableQueue()
+        :param cache: multiprocessing.manager.dict()
+        :param setup: function to create a new instance of the design problem
+        """
         super().__init__()
         self.task_queue = task_queue
         self.cache = cache
@@ -47,17 +53,23 @@ class Worker(multiprocessing.Process):
         logging.info("Worker process init")
 
     def run(self):
+        """
+        Poll the task queue until a task (candidate, caller_name) are available, (None, None) or a KeyboardInterrupt
+            signals shutdown
+
+        :return: None
+        """
         logging.info("Worker process startup tasks")
 
         # Create a new problem for the worker
         problem = self.setup()
-        proc_name = self.name
+        # proc_name = self.name # not currently used
         candidate = None
 
         while True:
             try:
-                # Get task from queue
-                candidate, name = self.task_queue.get()
+                # Get task from queue, this method blocks this process until a task is available
+                candidate, caller_name = self.task_queue.get()
                 logging.info(f"Worker process got {candidate} from queue")
 
                 if candidate is None:
@@ -66,34 +78,32 @@ class Worker(multiprocessing.Process):
                     self.task_queue.task_done()
                     break
 
-                # Execute task
+                # Execute task, measure evaluation time
                 start_time = time.time()
                 candidate, result = problem.evaluate_objective(candidate)
                 result['eval_time'] = time.time() - start_time
-                result['caller'] = [name]
+                result['caller'] = [caller_name]
 
             except KeyboardInterrupt:
                 # Exit cleanly
                 self.task_queue.task_done()
 
-                # Signals any waiting optimizer threads to exit
+                # Signal any waiting optimizer threads to exit
                 if candidate is not None:
                     self.cache[candidate] = OptimizerInterrupt
 
                 logging.info(f"Worker process got KeyboardInterrupt, exiting")
                 break
 
-            # Mark task as done and return result
+            # Objective returns normally, mark task as done and return result
             self.task_queue.task_done()
             self.cache[candidate] = result
             logging.info(f"Worker process calculated objective for {candidate}")
 
-        return
-
 
 class OptimizationDriver():
     """
-
+    Object to interface the HOPP optimization problem with humpday optimizers
     """
     DEFAULT_KWARGS = dict(time_limit=np.inf,
                           eval_limit=np.inf,
@@ -104,20 +114,35 @@ class OptimizationDriver():
                           scaled=True)
 
     def __init__(self,
-                 setup,
+                 setup: Callable,
                  **kwargs) -> None:
+        """
+        Object to interface the HOPP optimization problem with humpday optimizers
+
+        :param setup: Function which creates and returns a new instance of the optimization problem
+        :param kwargs: Optional keyword arguments to change driver options (see DEFAULT_KWARGS)
+        """
         logging.info("Driver init tasks")
 
-        self.problem = setup()
         self.setup = setup
+        self.problem = setup() # The driver needs an instance of the problem to access problem.candidate_from()
         self.parse_kwargs(kwargs)
 
-        self.init_cache()
+        self.best_obj = None
+        self.cache_info = dict(hits=0, misses=0, size=0, total_evals=0)
         self.get_candidate = self.problem.candidate_from_unit_array if self.options['scaled'] \
-            else self.problem.candidate_from_array
+            else self.problem.candidate_from_array # Function to create formatted design candidates
         self.start_time = None
+        self.force_stop = False
+        self.eval_count = 0
 
-    def parse_kwargs(self, kwargs) -> None:
+    def parse_kwargs(self, kwargs: dict) -> None:
+        """
+        Helper function to set defaults and update options with user-provided input
+
+        :param kwargs: Using **kwargs this is a dict of keyword arguments provided by the user
+        :return: None
+        """
         self.options = self.DEFAULT_KWARGS.copy()
 
         for key, value in kwargs.items():
@@ -126,16 +151,13 @@ class OptimizationDriver():
             else:
                 print(f"Ignoring unknown driver option {key}={value}")
 
+    def init_parallel_workers(self, num_workers: int) -> None:
+        """
+        Create the communication queue, cache dictionary, thread lock, and worker processes
 
-    def init_cache(self):
-        self.best_obj = None
-        self.cache = dict()
-        self.cache_info = {'hits': 0,
-                           'misses': 0,
-                           'size': 0,
-                           'total_evals': 0}
-
-    def init_parallel_workers(self, num_workers):
+        :param num_workers: Number of process-independent workers, which evaluate the objective.
+        :return:
+        """
         logging.info("Create parallel workers")
 
         self.tasks = multiprocessing.JoinableQueue()
@@ -147,14 +169,21 @@ class OptimizationDriver():
         self.workers = [Worker(self.tasks, self.cache, self.setup)
                            for _ in range(num_workers)]
 
+        # Start the workers polling the task queue
         for w in self.workers:
             w.start()
 
         logging.info("Create parallel workers, done")
 
-    def cleanup_parallel(self):
+    def cleanup_parallel(self) -> None:
+        """
+        Cleanup all worker processes, signal them to exit cleanly, mark any pending tasks as complete
+
+        :return: None
+        """
         logging.info("Cleanup parallel workers")
 
+        # If the driver receives a KeyboardInterrupt then the task queue needs to be emptied
         if self.force_stop:
             try:
                 # Mark all tasks complete
@@ -167,7 +196,7 @@ class OptimizationDriver():
                 pass
 
         else:
-            # Exit normally, None task signals workers to exit
+            # Exit normally, None task signals each worker to exit
             for i in range(len(self.workers)):
                 self.tasks.put((None, 'worker exit'))
 
@@ -176,7 +205,8 @@ class OptimizationDriver():
         for w in self.workers:
             w.join()
 
-        # Any tasks returning exceptions should be removed from the cache
+        # Any tasks pending during a driver exception should be removed from the cache
+        # Note that candidates producing simulation exceptions may still exist in the cache
         pop_list = []
         for key, value in self.cache.items():
             if not isinstance(value, dict):
@@ -186,7 +216,12 @@ class OptimizationDriver():
 
         logging.info("Cleanup tasks complete")
 
-    def check_interrupt(self):
+    def check_interrupt(self) -> None:
+        """
+        Check optional stopping criteria, these are specified by the user in the driver options
+
+        :return: None
+        """
         if self.force_stop:
             # print("Driver exiting, KeyBoardInterrupt")
             logging.info("Driver exiting, KeyBoardInterrupt")
@@ -243,6 +278,12 @@ class OptimizationDriver():
         print(f"Best Candidate:\n  {candidate_str}")
 
     def write_cache(self, filename=None):
+        """
+        Write driver cache out to pickle file
+
+        :param filename: Optional path of file to write out the cache to
+        :return:  None
+        """
         if filename is None:
             filename = 'driver_cache.pkl'
 
@@ -253,6 +294,12 @@ class OptimizationDriver():
             pickle.dump((cache, cache_info), f)
 
     def read_cache(self, filename=None):
+        """
+        Read the driver cache from file
+
+        :param filename: Optional path of file to read the cache from
+        :return:
+        """
         if filename is None:
             filename = 'driver_cache.pkl'
 
@@ -262,15 +309,33 @@ class OptimizationDriver():
         self.cache.update(cache)
         self.cache_info.update(cache_info)
 
-    def wrapped_objective(self):
+    def wrapped_objective(self) -> None:
         """
-        Update with new parallel structure TODO
-        Should probably explain why I'm doing this
+        This method implements the logic to check if a candidate is in the cache, or is pending evaluation, or neither.
+        Each optimizer thread needs its own copy of this method since they don't have access to the driver object, we
+        can implement this by wrapping this method and returning the wrapped function. This allows the optimizer threads
+        to share the driver object without explicitly passing it to them, and allows them to all use the shared task
+        queue and driver cache.
+
+        :return: None
         """
         eval_count = 0
 
         @wraps(self.wrapped_objective)
-        def wrapper(*args, name=None, idx=None, objective_keys=None):
+        def wrapper(*args, name=None, idx=None, objective_keys=None) -> float:
+            """
+            Objective function the optimizer threads call, assumes a parallel structure and avoids any re-calculations
+                - Check if candidate is in cache, if so return objective stored in cache
+                - If not, check if candidate is in queue (indicated by integer value in cache), wait for signal
+                - If not, objective needs to be calculated, add candidate to task queue, poll cache for return,
+                    and finally signal any threads waiting on the same candidate
+
+            :param args: Follows the optimizer's convention of objective inputs (typically an array of floats)
+            :param name: Caller name to insert into the result dictionary
+            :param idx: Thread index, used for signal conditions
+            :param objective_keys: Ordered list of keys to get the objective from the result dictionary
+            :return: the numeric value being optimized
+            """
             nonlocal eval_count
             eval_count += 1
 
@@ -279,7 +344,7 @@ class OptimizationDriver():
             self.cache_info['total_evals'] += 1
 
             try:
-                # Check if result in cache
+                # Check if result in cache, throws KeyError if not
                 self.lock.acquire()
                 result = self.cache[candidate]
                 self.lock.release()
@@ -287,9 +352,7 @@ class OptimizationDriver():
                 logging.info(f"Cache hit on candidate {candidate}")
 
                 if isinstance(result, int):
-                    # In cache but not complete, poll cache
-                    # while (result := self.cache[candidate]) is None:
-                    #     time.sleep(0.01)
+                    # In cache but not complete, wait for complete signal
                     signal = self.conditions[result]
                     with signal:
                         signal.wait()
@@ -301,6 +364,7 @@ class OptimizationDriver():
                         logging.info(f"Driver interrupt while waiting for objective evaluation")
                         self.check_interrupt()
 
+                    # Append this caller name to the result dictionary
                     with self.lock:
                         result['caller'].append((name, eval_count))
                         self.cache[candidate] = result
@@ -310,6 +374,7 @@ class OptimizationDriver():
 
                 else:
                     # Result available in cache, no work needed
+                    # Append this caller name to the result dictionary
                     with self.lock:
                         result['caller'].append((name, eval_count))
                         self.cache[candidate] = result
@@ -318,28 +383,32 @@ class OptimizationDriver():
                     return recursive_get(result, objective_keys)
 
             except KeyError:
-                # Candidate not in cache
-                self.cache[candidate] = idx  # indicates waiting condition
+                # Candidate not in cache, nor waiting in queue
+                self.cache[candidate] = idx  # indicates waiting condition for any other thread
 
+                # Insert candidate and caller information into task queue
                 self.tasks.put((candidate, (name, eval_count)))
 
                 self.lock.release()
                 self.cache_info['misses'] += 1
                 logging.info(f"Cache miss on candidate {candidate}")
 
-                # Poll cache for available result (should be threading.Condition)
+                # Poll cache for available result (unclear how this could be a threading.Condition signal)
                 while isinstance(result := self.cache[candidate], int):
                     time.sleep(0.5)
 
+                # Signal any other threads waiting on the same candidate
                 signal = self.conditions[idx]
                 with signal:
                     signal.notifyAll()
 
+                # KeyboardInterrupt places a OptimizerInterrupt in the cache to signal a force_stop
                 if not isinstance(result, dict):
                     self.force_stop = True
                     logging.info(f"Driver interrupt while waiting for objective evaluation")
                     self.check_interrupt()
 
+                # Update best best objective if needed, and print a log line to console
                 if (self.best_obj is None) or (result['net_present_values']['hybrid'] < self.best_obj):
                     self.best_obj = result['net_present_values']['hybrid']
                     reason = 'new_best'
@@ -347,6 +416,7 @@ class OptimizationDriver():
                 else:
                     reason = ''
 
+                # additional information for log line
                 info = dict(eval_time=result['eval_time'], reason=reason)
 
                 with self.lock:
@@ -361,6 +431,14 @@ class OptimizationDriver():
 
 
     def parallel_optimize(self, optimizers, opt_config, objective_keys, cache_file=None):
+        """
+
+        :param optimizers:
+        :param opt_config:
+        :param objective_keys:
+        :param cache_file:
+        :return:
+        """
         # setup
         self.start_time = time.time()
         self.eval_count = 0
@@ -414,6 +492,12 @@ class OptimizationDriver():
         return best_candidate, recursive_get(best_result, objective_keys)
 
     def parallel_execute(self, candidates, cache_file=None):
+        """
+
+        :param candidates:
+        :param cache_file:
+        :return:
+        """
         # setup
         self.start_time = time.time()
         self.eval_count = 0
