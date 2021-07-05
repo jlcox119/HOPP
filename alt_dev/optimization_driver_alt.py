@@ -488,11 +488,14 @@ class OptimizationDriver():
 
                     # Optimizer thread exits normally
                     else:
-                        print(f"Optimizer {name} finished")
+                        # Print done message if input is a function (as in an optimization run)
+                        if callable(inputs[0]):
+                            print(f"Optimizer {name} finished")
 
             # Allows clean exit on KeyboardInterrupt
             except KeyboardInterrupt:
-                pass
+                for future, name in threads.items():
+                    future.cancel()
 
         # End worker processes
         self.cleanup_parallel()

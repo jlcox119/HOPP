@@ -85,6 +85,8 @@ class HybridSizingProblem():  # OptimizationProblem (unwritten base)
                     assert isinstance(precision, int), \
                         f"{key}:{subkey} invalid 'precision': {precision} must be an integer value"
 
+                    # TODO assert that the bounds are not higher precision than specified precision
+
                     precisions.append(precision)
                     field_set.add(field_name)
                     fields.append(field_name)
