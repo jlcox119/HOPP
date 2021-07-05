@@ -430,11 +430,11 @@ class OptimizationDriver():
         return wrapper
 
 
-    def parallel_optimize(self, optimizers, opt_config, objective_keys, cache_file=None):
+    def parallel_execute(self, callables, inputs, objective_keys=None, cache_file=None):
         """
 
-        :param optimizers:
-        :param opt_config:
+        :param callables:
+        :param inputs:
         :param objective_keys:
         :param cache_file:
         :return:
@@ -444,101 +444,97 @@ class OptimizationDriver():
         self.eval_count = 0
         self.force_stop = False
 
-        # Establish communication queues and execution workers
-        # Start workers
-        n_opt = len(optimizers)
-        num_workers = min(self.options['n_proc'], n_opt)
-
+        # Establish communication queues and execution workers-
+        num_workers = min(self.options['n_proc'], len(callables))  # optimizers are assumed to be serial
         self.init_parallel_workers(num_workers)
 
+        # Update cache from file
         if cache_file is not None:
             self.read_cache(cache_file)
 
-        # Starting optimizer names
-        self.opt_names = [opt.__name__ for opt in optimizers]
-        obj = [partial(self.wrapped_objective(), name=name, idx=i, objective_keys=objective_keys) for i,name in enumerate(self.opt_names)]
-        opt = [partial(opt, **opt_config) for opt in optimizers]
+        # Add thread conditions to allow signaling between threads waiting on the same candidate
+        self.conditions = [threading.Condition() for _ in range(len(callables))]
 
-        for i in range(n_opt):
-            obj[i].__name__ = self.opt_names[i]
-
-        self.conditions = [threading.Condition() for _ in range(n_opt)]
-
+        # Begin parallel execution
         self.print_log_header()
-
-        with cf.ThreadPoolExecutor(max_workers=n_opt) as executor:
+        with cf.ThreadPoolExecutor(max_workers=num_workers) as executor:
             try:
-                threads = {executor.submit(opt[i], obj[i]):name for i,name in enumerate(self.opt_names)}
+                threads = {executor.submit(callables[i], inputs[i]):name for i, name in enumerate(self.opt_names)}
 
                 for future in cf.as_completed(threads):
                     name = threads[future]
                     try:
                         data = future.result()
+
+                    # Let an OptimizerInterrupt pass
+                    except OptimizerInterrupt:
+                        pass
+
+                    # Print any others
                     except Exception as exc:
                         err_str = traceback.format_exc()
                         print(f"{name} generated an exception: {err_str}")
+
+                    # Optimizer thread exits normally
                     else:
                         print(f"Optimizer {name} finished", data)
 
+            # Allows clean exit on KeyboardInterrupt
             except KeyboardInterrupt:
                 pass
 
         # End worker processes
         self.cleanup_parallel()
 
-        best_candidate, best_result = min(self.cache.items(), key=lambda item: recursive_get(item[1], objective_keys))
-        self.print_log_end(best_candidate, recursive_get(best_result, objective_keys))
+        if objective_keys is not None:
+            best_candidate, best_result = min(self.cache.items(), key=lambda item: recursive_get(item[1], objective_keys))
+            self.print_log_end(best_candidate, recursive_get(best_result, objective_keys))
 
-        return best_candidate, recursive_get(best_result, objective_keys)
+            return best_candidate, recursive_get(best_result, objective_keys)
 
-    def parallel_execute(self, candidates, cache_file=None):
+        else:
+            return self.eval_count
+
+
+    def parallel_sample(self, candidates, cache_file=None):
         """
 
         :param candidates:
         :param cache_file:
         :return:
         """
-        # setup
-        self.start_time = time.time()
-        self.eval_count = 0
-        self.force_stop = False
+        n_candidates = len(candidates)
+        self.opt_names = [f"Sample {i}" for i in range(n_candidates)]
 
-        # Establish communication queues and execution workers
-        # Start workers
-        num_workers = min(self.options['n_proc'], len(candidates))
-        self.init_parallel_workers(num_workers)
+        callables = [partial(self.wrapped_objective(), name=str(name), idx=name) for name in self.opt_names]
 
-        if cache_file is not None:
-            self.read_cache(cache_file)
+        evaluations = self.parallel_execute(callables, candidates, cache_file)
 
-        self.opt_names = ['test']
-        self.print_log_header()
+        return evaluations
 
-        obj = [partial(self.wrapped_objective(), name=str(name), idx=name) for name in range(len(candidates))]
-        for i in range(len(candidates)):
-            obj[i].__name__ = str(i)
 
-        self.conditions = [threading.Condition() for _ in range(len(candidates))]
+    def parallel_optimize(self, optimizers, opt_config, objective_keys, cache_file=None):
+        """
 
-        with cf.ThreadPoolExecutor(max_workers=num_workers) as executor:
-            try:
-                threads = {executor.submit(obj[i], candidate): str(i) for i, candidate in enumerate(candidates)}
+        :param optimizers:
+        :param opt_config:
+        :param objective_keys:
+        :param cache_file:
+        :return:
+        """
+        n_opt = len(optimizers)
+        self.opt_names = [opt.__name__ for opt in optimizers]
 
-                for future in cf.as_completed(threads):
-                    name = threads[future]
-                    try:
-                        data = future.result()
+        # Defining optimizer thread callables and inputs
+        # The wrapped objective function is the input to the optimizer
+        callables = [partial(opt, **opt_config) for opt in optimizers]
+        inputs = [partial(self.wrapped_objective(), name=name, idx=i, objective_keys=objective_keys)
+                  for i, name in enumerate(self.opt_names)]
 
-                    except OptimizerInterrupt:
-                        pass
+        # Some optimizers need the threads to have a __name__ attribute, partial objects do not
+        for i in range(n_opt):
+            inputs[i].__name__ = self.opt_names[i]
 
-                    except Exception as exc:
-                        print('%r generated an exception: %s' % (name, exc))
+        best_candidate, best_result = self.parallel_execute(callables, inputs, objective_keys, cache_file)
 
-            except KeyboardInterrupt:
-                pass
-
-        # End worker processes
-        self.cleanup_parallel()
-
-        return len(candidates)
+        return best_candidate, best_result
