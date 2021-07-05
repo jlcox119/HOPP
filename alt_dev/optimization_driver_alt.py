@@ -475,9 +475,11 @@ class OptimizationDriver():
                     try:
                         data = future.result()
 
-                    # Let an OptimizerInterrupt pass
+                    # On an OptimizerInterrupt cancel all pending futures
                     except OptimizerInterrupt:
-                        pass
+                        for future, name in threads.items():
+                            future.cancel()
+                        break
 
                     # Print any others
                     except Exception as exc:
@@ -486,7 +488,7 @@ class OptimizationDriver():
 
                     # Optimizer thread exits normally
                     else:
-                        print(f"Optimizer {name} finished", data)
+                        print(f"Optimizer {name} finished")
 
             # Allows clean exit on KeyboardInterrupt
             except KeyboardInterrupt:

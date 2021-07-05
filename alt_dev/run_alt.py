@@ -65,4 +65,4 @@ if __name__ == '__main__':
     logging.info("All Tasks Complete")
 
     # Check on the driver cache
-    print(driver.cache_info)
+    # print(driver.cache_info)
