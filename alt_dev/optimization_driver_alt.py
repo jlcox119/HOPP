@@ -370,7 +370,10 @@ class OptimizationDriver():
                         self.cache[candidate] = result
 
                     logging.info(f"Cache wait returned on candidate {candidate}")
-                    return recursive_get(result, objective_keys)
+                    if objective_keys is not None:
+                        return recursive_get(result, objective_keys)
+                    else:
+                        return result
 
                 else:
                     # Result available in cache, no work needed
@@ -380,7 +383,10 @@ class OptimizationDriver():
                         self.cache[candidate] = result
 
                     logging.info(f"Cache hit returned on candidate {candidate}")
-                    return recursive_get(result, objective_keys)
+                    if objective_keys is not None:
+                        return recursive_get(result, objective_keys)
+                    else:
+                        return result
 
             except KeyError:
                 # Candidate not in cache, nor waiting in queue
@@ -425,7 +431,10 @@ class OptimizationDriver():
 
                 self.cache_info['size'] += 1
                 logging.info(f"Cache new item returned on candidate {candidate}")
-                return recursive_get(result, objective_keys)
+                if objective_keys is not None:
+                    return recursive_get(result, objective_keys)
+                else:
+                    return result
 
         return wrapper
 
@@ -496,7 +505,7 @@ class OptimizationDriver():
             return self.eval_count
 
 
-    def parallel_sample(self, candidates, cache_file=None):
+    def parallel_sample(self, candidates, design_name='Sample', cache_file=None):
         """
 
         :param candidates:
@@ -504,9 +513,10 @@ class OptimizationDriver():
         :return:
         """
         n_candidates = len(candidates)
-        self.opt_names = [f"Sample {i}" for i in range(n_candidates)]
+        self.opt_names = [f"{design_name}-{i}" for i in range(n_candidates)]
 
-        callables = [partial(self.wrapped_objective(), name=str(name), idx=name) for name in self.opt_names]
+        callables = [partial(self.wrapped_objective(), name=name, idx=i)
+                     for i,name in enumerate(self.opt_names)]
 
         evaluations = self.parallel_execute(callables, candidates, cache_file)
 
