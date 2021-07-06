@@ -105,13 +105,12 @@ class OptimizationDriver():
     """
     Object to interface the HOPP optimization problem with humpday optimizers
     """
-    DEFAULT_KWARGS = dict(time_limit=np.inf,
-                          eval_limit=np.inf,
-                          obj_limit=-np.inf,
-                          n_proc=multiprocessing.cpu_count()-4,
-                          log_freq=1,
-                          log_file=None,
-                          scaled=True)
+    DEFAULT_KWARGS = dict(time_limit=np.inf,  # total time limit in seconds
+                          eval_limit=np.inf,  # objective evaluation limit (counts new evaluations only)
+                          obj_limit=-np.inf,  # lower bound of objective, exit if bect objective is less than this
+                          n_proc=multiprocessing.cpu_count()-4, # maximum number of objective process workers
+                          log_file=None, # filename for the driver logger
+                          scaled=True) # True if the sample/optimizer candidates need to be scaled to problem units
 
     def __init__(self,
                  setup: Callable,
@@ -160,10 +159,11 @@ class OptimizationDriver():
         """
         logging.info("Create parallel workers")
 
-        self.tasks = multiprocessing.JoinableQueue()
-        self.manager = multiprocessing.Manager()
-        self.cache = self.manager.dict()
-        self.lock = threading.Lock()
+        if not hasattr(self, 'tasks'):
+            self.tasks = multiprocessing.JoinableQueue()
+            self.manager = multiprocessing.Manager()
+            self.cache = self.manager.dict()
+            self.lock = threading.Lock()
 
         print(f"Creating {num_workers} workers")
         self.workers = [Worker(self.tasks, self.cache, self.setup)
@@ -244,7 +244,11 @@ class OptimizationDriver():
             raise OptimizerInterrupt
 
 
-    def print_log_header(self):
+    def print_log_header(self) -> None:
+        """
+        Print a linear solver-style log header.
+
+        """
         self.log_headers = ['Obj_Evals', 'Best_Objective', 'Eval_Time', 'Total_Time']
         self.log_widths = [len(header) + 5 for header in self.log_headers]
 
@@ -255,7 +259,14 @@ class OptimizationDriver():
         print()
         print("".join((val.rjust(width) for val, width in zip(self.log_headers, self.log_widths))))
 
-    def print_log_line(self, info:dict):
+    def print_log_line(self, info: dict) -> None:
+        """
+        Print a linear solver-style log line.
+
+        :param info: Dictionary containing at least the evaluation time of the last iteration and reason why a log
+        line is being printed. Originally lines would be printed for a hit on the cache (denoted by a 'c' prefix on the
+        the line, but this was removed, and lines are now only printed on new evaluations for conciseness.
+        """
         prefix_reasons = {'cache_hit': 'c ', 'new_best' :'* ', '': ''}
         prefix = prefix_reasons[info['reason']]
 
@@ -441,12 +452,15 @@ class OptimizationDriver():
 
     def parallel_execute(self, callables, inputs, objective_keys=None, cache_file=None):
         """
+        Execute each pairwise callable given input in separate threads, using up to n_processors or the number of
+        callables whichever is less.
 
-        :param callables:
-        :param inputs:
-        :param objective_keys:
-        :param cache_file:
-        :return:
+        :param callables: A list of callable functions (e.g. a list of optimizer functions)
+        :param inputs: A list of inputs, one for each callable (e.g. a list of wrapped problem objectives)
+        :param objective_keys: A list of keys for the result nested dictionary structure
+        :param cache_file: A filename corresponding to a pickled driver cache, used to initialize the driver cache
+        :return: Either the best objective found, corresponding to objective_keys, or the number of
+                successful evaluations if objective_keys is None
         """
         # setup
         self.start_time = time.time()
@@ -512,10 +526,12 @@ class OptimizationDriver():
 
     def parallel_sample(self, candidates, design_name='Sample', cache_file=None):
         """
+        Execute the objective function on each candidate in a sample in parallel, using yp to n_processors or the
+        number of candidates threads.
 
-        :param candidates:
-        :param cache_file:
-        :return:
+        :param candidates: A list of unit arrays corresponding to the samples of a design.
+        :param cache_file: A filename corresponding to a pickled driver cache, used to initialize the driver cache
+        :return: The number of successful evaluations.
         """
         n_candidates = len(candidates)
         self.opt_names = [f"{design_name}-{i}" for i in range(n_candidates)]
@@ -530,6 +546,7 @@ class OptimizationDriver():
 
     def parallel_optimize(self, optimizers, opt_config, objective_keys, cache_file=None):
         """
+        Execute the
 
         :param optimizers:
         :param opt_config:

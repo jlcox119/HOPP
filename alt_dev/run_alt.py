@@ -42,7 +42,7 @@ if __name__ == '__main__':
     logging.info("Main Startup")
 
     # Driver config
-    driver_config = dict(eval_limit=10, obj_limit=-3e8, n_proc=2) #time_limit=40,
+    driver_config = dict(eval_limit=100, obj_limit=-3e8, n_proc=12, time_limit=60)
 
     # Driver init
     driver = OptimizationDriver(problem_setup, **driver_config)
