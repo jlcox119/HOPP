@@ -63,6 +63,7 @@ if __name__ == '__main__':
     num_evals = driver.parallel_sample(candidates)
 
     logging.info("All Tasks Complete")
+    driver.write_cache()
 
     # Check on the driver cache
     # print(driver.cache_info)
