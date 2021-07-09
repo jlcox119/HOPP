@@ -524,7 +524,7 @@ class OptimizationDriver():
             return self.eval_count
 
 
-    def parallel_sample(self, candidates, design_name='Sample', cache_file=None):
+    def parallel_sample(self, candidates, design_name='Sample', cache_file=None) -> int:
         """
         Execute the objective function on each candidate in a sample in parallel, using yp to n_processors or the
         number of candidates threads.
@@ -544,15 +544,16 @@ class OptimizationDriver():
         return evaluations
 
 
-    def parallel_optimize(self, optimizers, opt_config, objective_keys, cache_file=None):
+    def parallel_optimize(self, optimizers, opt_config, objective_keys, cache_file=None) -> tuple:
         """
-        Execute the
+        Execute the the list of optimizers on an instance of the wrapped objective function, using up to n_processors
+        or the number of optimizers.
 
-        :param optimizers:
-        :param opt_config:
-        :param objective_keys:
-        :param cache_file:
-        :return:
+        :param optimizers: A list of optimization callable functions, taking the function to be optimized and config.
+        :param opt_config: The common optimizer configuration, shared between all optimization functions.
+        :param objective_keys: A list of keys for the result nested dictionary structure
+        :param cache_file: A filename corresponding to a pickled driver cache, used to initialize the driver cache
+        :return: The best candidate and best simulation result found.
         """
         n_opt = len(optimizers)
         self.opt_names = [opt.__name__ for opt in optimizers]
