@@ -114,7 +114,7 @@ class HybridSizingProblem():  # OptimizationProblem (unwritten base)
         assert (actual_length := len(candidate)) == self.n_dim, \
             f"Expected candidate with {self.n_dim} (field,value) pairs, got candidate of length {actual_length}"
 
-        # For each field value pair assert that th field name is correct and that the value is between the upper
+        # For each field value pair assert that the field name is correct and that the value is between the upper
         # and lower bounds
         for i, (field, value) in enumerate(candidate):
             assert field == self.candidate_fields[i], \

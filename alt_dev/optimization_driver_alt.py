@@ -107,7 +107,7 @@ class OptimizationDriver():
     """
     DEFAULT_KWARGS = dict(time_limit=np.inf,  # total time limit in seconds
                           eval_limit=np.inf,  # objective evaluation limit (counts new evaluations only)
-                          obj_limit=-np.inf,  # lower bound of objective, exit if bect objective is less than this
+                          obj_limit=-np.inf,  # lower bound of objective, exit if best objective is less than this
                           n_proc=multiprocessing.cpu_count()-4, # maximum number of objective process workers
                           log_file=None, # filename for the driver logger
                           scaled=True) # True if the sample/optimizer candidates need to be scaled to problem units
@@ -288,7 +288,7 @@ class OptimizationDriver():
         print(f"Best Objective: {best_objective:.2f}")
         print(f"Best Candidate:\n  {candidate_str}")
 
-    def write_cache(self, filename=None):
+    def write_cache(self, filename=None)  -> None:
         """
         Write driver cache out to pickle file
 
@@ -304,12 +304,12 @@ class OptimizationDriver():
         with open(filename, 'wb') as f:
             pickle.dump((cache, cache_info), f)
 
-    def read_cache(self, filename=None):
+    def read_cache(self, filename=None) -> None:
         """
         Read the driver cache from file
 
         :param filename: Optional path of file to read the cache from
-        :return:
+        :return: None
         """
         if filename is None:
             filename = 'driver_cache.pkl'
